@@ -1,0 +1,12 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "addin",
+  "id": "9b70f5e1-4653-4c46-a2d8-fd0ee68e23a1",
+  "author": "OpenAI / User",
+  "description": {
+    "": "Planar isogrid finishing feature with geometry-prepared auto fitting and optional accelerated GEOS clipping."
+  },
+  "version": "0.6.3",
+  "runOnStartup": false,
+  "supportedOS": "windows|mac"
+}
