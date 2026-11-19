@@ -42,7 +42,7 @@ An optional Shapely/GEOS implementation remains in `geometry_compiled.py`, along
 
 2D preview and Auto Fit calculations run in a dedicated Python thread, with custom events returning results to Fusion's main thread. CAD feature creation and viewport graphics remain on the main thread. Obsolete preview calculations are superseded by newer edits.
 
-When the user **opens the isogrid command**, a separate short-lived thread checks the version in the public GitHub `main` manifest. Results are cached for 30 minutes and network failures are silent. If a newer version exists, **Install Update** downloads the public repository archive on demand and installs it in a staged, rollback-capable operation. The loaded add-in remains unchanged until Fusion restarts. Version numbers must be increased in the manifest when publishing a new version.
+When the user **opens the isogrid command**, a separate short-lived thread checks the version in the public GitHub `main` manifest. Automatic results are cached for 30 minutes and network failures are silent. The **Check for Updates** button bypasses the cache, reusing a request already in progress if necessary. Manual checks explicitly display checking, up-to-date, available-update, or network-error status in the command. If a newer version exists, **Install Update** downloads the public repository archive on demand and installs it in a staged, rollback-capable operation. The loaded add-in remains unchanged until Fusion restarts. Version numbers must be increased in the manifest when publishing a new version.
 
 ## Tests
 

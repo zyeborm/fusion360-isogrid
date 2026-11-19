@@ -27,7 +27,7 @@ COMMAND_ID = 'fusion360_isogrid_create'
 COMMAND_NAME = 'fusion360-isogrid'
 # Keep the version in the running Python code, not in the on-disk manifest:
 # the updater replaces that manifest while this old code remains loaded.
-RUNNING_VERSION = '0.7.3'
+RUNNING_VERSION = '0.7.4'
 COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -49,9 +49,10 @@ def _show_update_notice(session):
     if notice is None or button is None:
         return
     newer = _update_checker.available()
+    manual_status = _update_checker.manual_status()
     state = (_update_installer.state() if _update_installer is not None
              else ('idle', None, None))
-    token = (newer, state)
+    token = (newer, state, manual_status)
     if getattr(session, '_shown_update', None) == token:
         return
     session._shown_update = token
@@ -69,6 +70,10 @@ def _show_update_notice(session):
             f'(running v{html.escape(RUNNING_VERSION)})')
         notice.isVisible = True
         button.isVisible = False
+    elif manual_status[0] == 'checking':
+        notice.formattedText = 'Checking GitHub for updates…'
+        notice.isVisible = True
+        button.isVisible = False
     elif newer:
         detail = (f'Previous installation attempt failed: {html.escape(error)}. '
                   if status == 'error' and error else '')
@@ -78,6 +83,17 @@ def _show_update_notice(session):
             'Install directly from GitHub?')
         notice.isVisible = True
         button.isVisible = True
+    elif manual_status[0] == 'current':
+        notice.formattedText = (
+            f'Up to date — currently running v{html.escape(RUNNING_VERSION)}.')
+        notice.isVisible = True
+        button.isVisible = False
+    elif manual_status[0] == 'error':
+        notice.formattedText = (
+            f'Update check failed: {html.escape(str(manual_status[1]))}. '
+            'Use Check for Updates to retry.')
+        notice.isVisible = True
+        button.isVisible = False
     else:
         notice.isVisible = False
         button.isVisible = False
@@ -1069,6 +1085,7 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
                 'No geometric warnings.',5,True)
             notice=inputs.addTextBoxCommandInput('update_notice','Update','',2,True)
             notice.isVisible=False
+            inputs.addBoolValueInput('check_update','Check for Updates',False,'',False)
             button=inputs.addBoolValueInput('install_update','Install Update',False,'',False)
             button.isVisible=False
             _refresh_field_feedback(inputs)
@@ -1101,7 +1118,16 @@ class ChangedHandler(adsk.core.InputChangedEventHandler):
         inputs=args.inputs
         changed=args.input.id
         try:
-            if changed=='install_update':
+            if changed=='check_update':
+                try:
+                    if inputs.itemById('check_update').value and _update_checker:
+                        _update_checker.check_now()
+                        _show_update_notice(self.session)
+                finally:
+                    self.session.updating=True
+                    try:inputs.itemById('check_update').value=False
+                    finally:self.session.updating=False
+            elif changed=='install_update':
                 try:
                     version = _update_checker.available() if _update_checker else None
                     if version and _update_installer and _update_installer.start(version):
@@ -1137,7 +1163,8 @@ class ChangedHandler(adsk.core.InputChangedEventHandler):
                     self.session.apply_fit(inputs,selected.index)
             elif changed in ('show_preview',):
                 self.session.request_preview(inputs)
-            elif changed not in ('status','activity','warnings','update_notice','install_update'):
+            elif changed not in ('status','activity','warnings','update_notice',
+                                  'check_update','install_update'):
                 # Auto Fit bounds/effort are independent of the manual pattern.
                 # Clear stale candidates without disturbing the manual preview.
                 if changed not in ('fit_min_pitch','fit_max_pitch',

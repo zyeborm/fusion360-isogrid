@@ -46,7 +46,8 @@ class VersionVisibilityTests(unittest.TestCase):
         inputs = SimpleNamespace(itemById=lambda key: {
             'update_notice': notice, 'install_update': button}[key])
         session = SimpleNamespace(alive=True, inputs=inputs, _shown_update=None)
-        checker = SimpleNamespace(available=lambda: '99.0.0')
+        checker = SimpleNamespace(available=lambda: '99.0.0',
+                                  manual_status=lambda: ('idle', None))
         installer = SimpleNamespace(state=lambda: ('idle', None, None))
         with patch.object(ui, '_update_checker', checker), \
              patch.object(ui, '_update_installer', installer):

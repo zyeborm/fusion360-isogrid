@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.4 — Manual update check
+
+- Added an always-visible **Check for Updates** button in the Fusion command.
+- Manual checks bypass the 30-minute automatic cache and display **Checking**, **Up to date**, **Update available**, or a failure message. An in-progress automatic request is reused to avoid duplicate downloads.
+- Retained the automatic check on command open and one-click **Install Update**.
+
 ## 0.7.3 — Preserve rib-width web around vertex holes
 
 - Corrected **Auto Max Hole** to reserve an edge-to-edge web equal to the rib width, rather than using the pocket-contact diameter. For feasible 60° pocket fillets, `D_auto = 2 × corner radius`.

@@ -67,10 +67,18 @@ class UpdateChecker:
         self._checking = False
         self._closed = False
         self._available = None
+        # Only explicit manual checks produce an up-to-date/error notice.
+        # Automatic checks remain silent when there is no available update.
+        self._manual_status = ('idle', None)
 
     def available(self):
         with self._lock:
             return self._available
+
+    def manual_status(self):
+        """(state, detail): idle, checking, current, available, or error."""
+        with self._lock:
+            return self._manual_status
 
     def check_on_open(self):
         """Returns cached update information immediately; may start one worker."""
@@ -89,19 +97,44 @@ class UpdateChecker:
         worker.start()
         return cached
 
+    def check_now(self):
+        """Force a network request, ignoring the 30-minute automatic cache.
+
+        When an automatic request is already running, reuse that fresh request
+        and make its result visible as a manual check. Never issue duplicates.
+        """
+        with self._lock:
+            if self._closed:
+                return False
+            self._manual_status = ('checking', None)
+            if self._checking:
+                # The in-flight request is already retrieving the latest data.
+                return True
+            self._checking = True
+            self._last_check = self._clock()
+        threading.Thread(target=self._check, daemon=True,
+                         name='IsogridManualUpdateCheck').start()
+        return True
+
     def _check(self):
         try:
             version = self._fetch()
             found = version if newer_version(self.local_version, version) else None
-        except Exception:
-            # Offline, captive portals, or an unavailable upstream should never
-            # interrupt designing a part. Retry when the cache expires.
+            error = None
+        except Exception as exc:
+            # Automatic failures remain silent; manual requests receive the
+            # failure reason, so "up to date" cannot mask a network error.
             found = None
+            error = str(exc) or type(exc).__name__
         with self._lock:
             if self._closed:
                 return
             self._available = found
             self._checking = False
+            if self._manual_status[0] == 'checking':
+                self._manual_status = (('error', error) if error else
+                                       ('available', version) if found else
+                                       ('current', version))
         try:
             self._notify()
         except Exception:
@@ -112,6 +145,7 @@ class UpdateChecker:
         with self._lock:
             self._closed = True
             self._available = None
+            self._manual_status = ('idle', None)
 
 
 # The update archive is downloaded only when the user clicks Install Update.
