@@ -1,6 +1,6 @@
 # fusion360-isogrid v0.6.3
 
-**Naming:** The Fusion add-in directory, entry script and manifest all use `fusion360-isogrid`. When upgrading from `IsogridFusion`, close Fusion and remove the old add-in entry/folder before adding this renamed directory. Internal command and attribute identifiers now follow the `fusion360-isogrid` name. Old installations should be removed before installing this renamed add-in.
+**Naming:** The add-in folder, entry script, manifest, command ID and attribute group use `fusion360-isogrid` (with underscores where Fusion IDs require them). This is a clean rename; old installations should be removed before installing this package.
 
 
 ## Field-level validation
