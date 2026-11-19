@@ -21,7 +21,7 @@ A Fusion 360 add-in that applies an **isogrid pattern** to a planar face of an e
 
 The command appears in **Solid → Add-Ins → fusion360-isogrid**.
 
-When a newer version is available, the command shows an **Install Update** button. Click it to download and install the update from GitHub; restart Fusion afterwards to load the new code. Existing dependencies and other local files are preserved.
+The command title displays the **currently running version** (for example, `fusion360-isogrid v0.6.7`). When a newer version is available, the command shows **Install Update**, including both the current and available versions. After installation, it reports the newly installed version and requests a Fusion restart. Reopen the command after restarting to confirm that the title has changed. Existing dependencies and other local files are preserved.
 
 ## Use
 

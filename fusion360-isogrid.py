@@ -24,6 +24,10 @@ APP = adsk.core.Application.get()
 UI = APP.userInterface
 COMMAND_ID = 'fusion360_isogrid_create'
 COMMAND_NAME = 'fusion360-isogrid'
+# Keep the version in the running Python code, not in the on-disk manifest:
+# the updater replaces that manifest while this old code remains loaded.
+RUNNING_VERSION = '0.6.7'
+COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
 ATTRIBUTE_GROUP = 'fusion360-isogrid'
@@ -33,11 +37,6 @@ _sessions = []
 _custom_event = None
 _update_checker = None
 _update_installer = None
-
-
-def _installed_version():
-    with open(Path(__file__).with_suffix('.manifest'), encoding='utf-8') as file:
-        return str(json.load(file)['version'])
 
 
 def _show_update_notice(session):
@@ -58,20 +57,23 @@ def _show_update_notice(session):
     status, version, error = state
     if status == 'installed':
         notice.formattedText = (
-            f'<b>Isogrid {html.escape(version)} installed.</b> '
-            'Restart Fusion to use the updated add-in.')
+            f'<b>Installed v{html.escape(version)}.</b> '
+            f'Currently running v{html.escape(RUNNING_VERSION)}. '
+            'Restart Fusion to activate the update.')
         notice.isVisible = True
         button.isVisible = False
     elif status == 'working':
         notice.formattedText = (
-            f'Installing Isogrid {html.escape(version)}…')
+            f'Installing v{html.escape(version)}… '
+            f'(running v{html.escape(RUNNING_VERSION)})')
         notice.isVisible = True
         button.isVisible = False
     elif newer:
         detail = (f'Previous installation attempt failed: {html.escape(error)}. '
                   if status == 'error' and error else '')
         notice.formattedText = (detail +
-            f'<b>Isogrid {html.escape(newer)} is available.</b> '
+            f'<b>Update v{html.escape(newer)} available</b> '
+            f'(running v{html.escape(RUNNING_VERSION)}). '
             'Install directly from GitHub?')
         notice.isVisible = True
         button.isVisible = True
@@ -1078,7 +1080,7 @@ def run(context):
         if _update_checker is not None:
             _update_checker.close()
         _update_checker=update_checker.UpdateChecker(
-            _installed_version(),lambda: APP.fireCustomEvent(CUSTOM_EVENT_ID))
+            RUNNING_VERSION,lambda: APP.fireCustomEvent(CUSTOM_EVENT_ID))
         if _update_installer is not None:
             _update_installer.close()
         _update_installer=update_checker.UpdateInstaller(
@@ -1088,7 +1090,9 @@ def run(context):
         if panel is None:raise RuntimeError('Cannot locate the Solid > Add-Ins panel.')
         command=UI.commandDefinitions.itemById(COMMAND_ID)
         if command:command.deleteMe()
-        command=UI.commandDefinitions.addButtonDefinition(COMMAND_ID,COMMAND_NAME,
+        # Fusion uses the CommandDefinition name for the dialog title as well
+        # as the toolbar label. This is the version *actually loaded*.
+        command=UI.commandDefinitions.addButtonDefinition(COMMAND_ID,COMMAND_TITLE,
             'Create a planar isogrid as a finishing cut; face boundaries and voids are respected.')
         handler=CreatedHandler();command.commandCreated.add(handler);_handlers.append(handler)
         control=panel.controls.itemById(COMMAND_ID)

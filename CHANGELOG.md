@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.7
+- Show the running add-in version in the Fusion command title.
+- Show both running and available/installed versions in update notices, including the restart-required state.
+- Compare updates against the running code version rather than a manifest that may already have been replaced on disk.
+
 ## 0.6.6
 - Added one-click update installation with staged files, rollback and restart notice.
 - Geometric warnings now keep OK enabled, with input tooltips and warning details.
