@@ -24,10 +24,10 @@ class OptionsTests(unittest.TestCase):
 
     def test_oversized_vertex_hole_warns_without_failing_geometry(self):
         data = {'pitch': 2, 'rib': .2, 'corner': .1,
-                'nodehole': .5, 'depth': .2, 'perimeter': .1,
+                'nodehole': .7, 'depth': .2, 'perimeter': .1,
                 'holeclear': .2, 'minfraction': 5, 'trim_boundary': True}
         message = ' '.join(self.ui._geometry_warnings(data))
-        self.assertIn('Large vertex holes', message)
+        self.assertIn('nominal rounded-junction maximum', message)
         shapes = geometry.make_pockets([self.region], 2, .2, .1, .2,
              0, 0, 0, .1, vertex_hole_diameter=.5, backend='python')
         self.assertGreater(len(shapes), 0)

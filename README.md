@@ -1,39 +1,39 @@
 # fusion360-isogrid
 
-A Fusion 360 add-in that creates an **isogrid pattern** on a planar face of an existing solid. It generates rounded triangular pockets, with optional holes at grid junctions, as a sketch and a single extrusion cut.
+A Fusion 360 add-in that applies an **isogrid pattern** to a planar face of an existing solid. It creates rounded triangular pockets, with optional holes at the grid vertices, as one sketch and one extrusion cut.
 
 ## Features
 
-- **Face selection:** Fill a planar face while respecting its outside edge and existing holes.
-- **Optional sketch boundary:** Limit the pattern to a selected sketch region.
-- **Adjustable pattern:** Cell pitch, rib width, pocket depth, corner radius, vertex-hole diameter, perimeter and hole clearances.
-- **Placement:** X/Y offsets, rotation, selectable origin and edge alignment.
-- **Auto Fit (optional):** Search a minimum/maximum pitch range and choose from several suggested layouts. The normal manual controls remain available.
-- **Live preview:** Pattern outlines update as settings change, with a working/ready indicator and warnings for questionable geometry.
-- **Trim to boundary:** On by default. Turn it off to generate full cells for manual sketch trimming.
+- **Select a face** and use its perimeter and existing holes as boundaries.
+- **Optional sketch boundary** to restrict the patterned area.
+- **Adjustable grid:** Cell pitch, rib width, extrusion depth, corner radius, vertex holes, perimeter and hole clearances.
+- **Placement:** X/Y offsets, rotation, origin point and edge alignment.
+- **Optional Auto Fit:** Specify minimum/maximum pitch, find candidate layouts and choose one. Manual controls remain available.
+- **Interactive preview** with working/ready status and advisory geometry warnings that leave OK enabled.
+- **Trim to boundary** is on by default; turn it off to generate complete triangles and circles for manual trimming.
 
 ## Install
 
-1. Download the repository using **Code → Download ZIP** (or clone it).
-2. Ensure the extracted add-in folder is named **`fusion360-isogrid`** and contains `fusion360-isogrid.py` and `fusion360-isogrid.manifest`.
+1. Download this repository with **Code → Download ZIP**, or clone it.
+2. Ensure the add-in folder is named `fusion360-isogrid` and contains `fusion360-isogrid.py` and `fusion360-isogrid.manifest`.
 3. In Fusion, open **Utilities → Scripts and Add-Ins → Add-Ins**.
-4. Add the folder using **+**, select **fusion360-isogrid**, and click **Run**.
+4. Add the folder using **+**, select `fusion360-isogrid` and click **Run**.
 
-The command appears under **Solid → Add-Ins → fusion360-isogrid**.
+The command appears in **Solid → Add-Ins → fusion360-isogrid**.
 
-When you open the command, it checks GitHub for a newer version and shows a link if an update is available. To update, close Fusion, replace the add-in files, and restart Fusion.
+When a newer version is available, the command shows an **Install Update** button. Click it to download and install the update from GitHub; restart Fusion afterwards to load the new code. Existing dependencies and other local files are preserved.
 
 ## Use
 
-1. Start the command and select a **planar face**.
+1. Start the command and select a planar solid face.
 2. Optionally select a sketch region to limit the pattern.
-3. Set pitch, ribs, depth, margins, corner radius and any vertex holes.
-4. Position the grid manually, or click **Find Fits** and pick a suggested layout. You can adjust that layout afterwards.
+3. Adjust pitch, ribs, depth, corner radius, margins and any vertex holes.
+4. Position the grid manually or click **Find Fits** to choose a suggested layout. You can adjust that choice afterwards.
 5. Inspect the preview and click **OK** to create the sketch and cut.
 
-The depth is shared by all pockets. Existing face holes are treated as exclusions when boundary trimming is enabled. Some tight clipped corners may remain sharp if the requested radius cannot fit; the add-in reports these in **Geometry warnings**.
+Every pocket uses the same extrusion depth. Existing holes are exclusion areas while boundary trimming is enabled. Tight corners that cannot accommodate the requested radius may remain sharp; the warning area reports them.
 
-**Current scope:** Planar faces. Pure-Python geometry; no additional dependencies.
+**Current scope:** Planar faces. Pure-Python geometry; no extra dependencies.
 
 ## More information
 

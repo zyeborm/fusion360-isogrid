@@ -7,6 +7,7 @@ intersection with one or more regions. This permits both face and sketch masks.
 from __future__ import annotations
 import math
 from dataclasses import dataclass
+
 # GEOS/Shapely support is deliberately disabled for now. An incompatible native
 # wheel can terminate Fusion outright during import. Keep this integration for
 # reconsideration later, but never load the compiled modules in this release.
@@ -31,6 +32,20 @@ def geometry_backend(backend="auto"):
 
 EPS = 1e-8
 SQRT3 = math.sqrt(3.0)
+
+
+def maximum_vertex_hole_diameter(rib_width, corner_radius):
+    """Nominal hole clearance between equilateral rounded pocket corners.
+
+    The inset triangular pocket vertex lies `rib_width` from its original
+    lattice junction (two edges each offset by rib_width/2). A 60-degree
+    internal fillet moves the nearest point of the pocket boundary away from
+    that junction by an additional `corner_radius`. Thus the largest circle
+    centred on an interior junction, tangent to six pockets, has diameter
+    2 * (rib_width + corner_radius). This assumes a feasible full-cell fillet;
+    margins and local trimming can only remove pocket material.
+    """
+    return 2.0 * (rib_width + max(0.0, corner_radius))
 
 
 def sub(a, b): return (a[0] - b[0], a[1] - b[1])

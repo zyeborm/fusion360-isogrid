@@ -32,6 +32,7 @@ _handlers = []
 _sessions = []
 _custom_event = None
 _update_checker = None
+_update_installer = None
 
 
 def _installed_version():
@@ -40,29 +41,50 @@ def _installed_version():
 
 
 def _show_update_notice(session):
-    """Only called from Fusion's main thread."""
+    """Sync update notice/button from worker state on Fusion's UI thread."""
     if not session.alive or session.inputs is None or _update_checker is None:
         return
-    control = session.inputs.itemById('update_notice')
-    if control is None:
+    notice = session.inputs.itemById('update_notice')
+    button = session.inputs.itemById('install_update')
+    if notice is None or button is None:
         return
     newer = _update_checker.available()
-    if getattr(session, '_shown_update', None) == newer:
+    state = (_update_installer.state() if _update_installer is not None
+             else ('idle', None, None))
+    token = (newer, state)
+    if getattr(session, '_shown_update', None) == token:
         return
-    session._shown_update = newer
-    if newer:
-        control.formattedText = (
+    session._shown_update = token
+    status, version, error = state
+    if status == 'installed':
+        notice.formattedText = (
+            f'<b>Isogrid {html.escape(version)} installed.</b> '
+            'Restart Fusion to use the updated add-in.')
+        notice.isVisible = True
+        button.isVisible = False
+    elif status == 'working':
+        notice.formattedText = (
+            f'Installing Isogrid {html.escape(version)}…')
+        notice.isVisible = True
+        button.isVisible = False
+    elif newer:
+        detail = (f'Previous installation attempt failed: {html.escape(error)}. '
+                  if status == 'error' and error else '')
+        notice.formattedText = (detail +
             f'<b>Isogrid {html.escape(newer)} is available.</b> '
-            f'<a href="{update_checker.REPOSITORY_URL}">View update on GitHub</a>')
-        control.isVisible = True
+            'Install directly from GitHub?')
+        notice.isVisible = True
+        button.isVisible = True
     else:
-        control.isVisible = False
+        notice.isVisible = False
+        button.isVisible = False
 
-# Fusion ValueCommandInput colours invalid expressions automatically, but it
-# cannot be marked invalid for *geometric* (cross-field) warnings without
-# disabling OK.  StringValueCommandInput exposes the native isValueError state
-# independently of OK.  Evaluate its text through Fusion's UnitsManager so
-# unit-aware formulas and user parameters remain supported.
+
+# Geometric warnings remain advisory. Fusion may disable OK when its native
+# isValueError state is set, even if validateInputs returns True. We leave that
+# flag clear and report issues with field tooltips and a warnings text area.
+# Text is still evaluated through Fusion's UnitsManager to preserve units,
+# expressions, and user parameters.
 ADVISORY_INPUT_UNITS = {
     'pitch': 'mm', 'rib': 'mm', 'perimeter': 'mm', 'holeclear': 'mm',
     'corner': 'mm', 'nodehole': 'mm', 'minfraction': '',
@@ -255,8 +277,7 @@ def _validate_settings(s):
 def _geometry_warnings(s, outlines=None):
     """Non-blocking design advisories, expressed in source-field units (cm).
 
-    Cross-field warnings are also mapped to StringValueCommandInput's native
-    isValueError flag, which does not change the OK button's enabled state.
+    Warnings remain advisory and never affect Fusion's OK button.
     """
     messages=[]
     pitch=s['pitch'];rib=s['rib'];corner=s['corner'];hole=s['nodehole']
@@ -268,10 +289,16 @@ def _geometry_warnings(s, outlines=None):
         maximum=(pitch-geometry.SQRT3*rib)/(2*geometry.SQRT3)
         if corner>=maximum:
             messages.append('Pocket corner radius exceeds the space available inside a full cell; sharp corners may remain.')
-    if hole>0 and rib>0 and hole>=rib:
-        messages.append('Vertex hole diameter exceeds Rib width and may intersect the pockets.')
-    if hole>0 and rib>0 and hole>=1.8*rib:
-        messages.append('Large vertex holes can merge with adjacent pockets or fail the final sketch cut.')
+    if hole>0 and rib>0 and corner>=0:
+        diameter_limit=geometry.maximum_vertex_hole_diameter(rib,corner)
+        if hole>diameter_limit+1e-7:
+            messages.append(
+                f'Vertex hole diameter exceeds the nominal rounded-junction maximum '
+                f'({diameter_limit*10:.3g} mm = 2 × (rib width + corner radius)); '
+                'circles may overlap triangular pockets.')
+        elif abs(hole-diameter_limit)<=1e-7:
+            messages.append('Vertex hole is tangent to the rounded pockets; '
+                            'zero clearance may create coincident sketch profiles.')
     if hole<0:messages.append('Vertex-hole diameter must be non-negative.')
     if s['depth']<=0:messages.append('Extrusion depth must be positive for a cut.')
     for field,title in [('perimeter','Perimeter margin'),('holeclear','Void clearance'),
@@ -313,7 +340,7 @@ def _advisory_field_errors(s):
     if pitch > geometry.SQRT3 * rib and radius > 0:
         maximum = (pitch-geometry.SQRT3*rib)/(2*geometry.SQRT3)
         if radius >= maximum: flag('corner')
-    if hole < 0 or (rib > 0 and hole >= rib): flag('nodehole')
+    if hole < 0 or (rib > 0 and hole > geometry.maximum_vertex_hole_diameter(rib,radius)+1e-7): flag('nodehole')
     if s['perimeter'] < 0: flag('perimeter')
     if s['holeclear'] < 0: flag('holeclear')
     if radius < 0: flag('corner')
@@ -322,10 +349,12 @@ def _advisory_field_errors(s):
 
 
 def _refresh_field_feedback(inputs, outlines=None):
-    """Native Fusion error colour per field, detailed advisory below.
+    """Show advisory field tooltips and detailed warnings without blocking OK.
 
-    Called on both inputChanged and validateInputs because certain Fusion
-    versions clear isValueError on the field currently being edited.
+    Fusion may disable OK whenever a StringValueCommandInput has
+    `isValueError=True`, even when validateInputs explicitly permits execution.
+    Accordingly, clear native error flags for all advisory expression fields.
+    Conversion/execution errors are reported on an attempted cut instead.
     """
     units = _units_manager()
     invalid_expressions = {}
@@ -334,17 +363,12 @@ def _refresh_field_feedback(inputs, outlines=None):
             _input_number(inputs, key, units)
         except ValueError as error:
             invalid_expressions[key] = str(error)
-
     if invalid_expressions:
+        s = None
         errors = dict(invalid_expressions)
-        try:
-            s = _inputs_to_settings(inputs)
-        except ValueError:
-            s = None
     else:
         s = _inputs_to_settings(inputs)
         errors = _advisory_field_errors(s)
-
     fit_min = fit_max = None
     if 'fit_min_pitch' not in invalid_expressions:
         fit_min = _input_number(inputs, 'fit_min_pitch', units)
@@ -355,13 +379,13 @@ def _refresh_field_feedback(inputs, outlines=None):
     if fit_range_bad:
         errors.update(fit_min_pitch=True, fit_max_pitch=True)
 
-    # The red/error colour is rendered by Fusion according to its own theme.
     for key in ADVISORY_INPUT_UNITS:
         field = inputs.itemById(key)
-        invalid = key in errors
-        if field.isValueError != invalid:
-            field.isValueError = invalid
-
+        # This flag was the cause of the disabled OK button in Fusion.
+        if field.isValueError:
+            field.isValueError = False
+        field.tooltip = ('⚠ Check Geometry warnings below for this value.'
+                         if key in errors else '')
     if invalid_expressions:
         lines = list(invalid_expressions.values())
     else:
@@ -911,6 +935,8 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
                 'No geometric warnings.',5,True)
             notice=inputs.addTextBoxCommandInput('update_notice','Update','',2,True)
             notice.isVisible=False
+            button=inputs.addBoolValueInput('install_update','Install Update',False,'',False)
+            button.isVisible=False
             _refresh_field_feedback(inputs)
             _update_placement_visibility(inputs)
             session=Session();session.inputs=inputs;session.command=command
@@ -941,7 +967,16 @@ class ChangedHandler(adsk.core.InputChangedEventHandler):
         inputs=args.inputs
         changed=args.input.id
         try:
-            if changed=='find_fits':
+            if changed=='install_update':
+                try:
+                    version = _update_checker.available() if _update_checker else None
+                    if version and _update_installer and _update_installer.start(version):
+                        _show_update_notice(self.session)
+                finally:
+                    self.session.updating=True
+                    try:inputs.itemById('install_update').value=False
+                    finally:self.session.updating=False
+            elif changed=='find_fits':
                 if inputs.itemById('find_fits').value:
                     try:
                         self.session.run_fit(inputs)
@@ -956,7 +991,7 @@ class ChangedHandler(adsk.core.InputChangedEventHandler):
                     self.session.apply_fit(inputs,selected.index)
             elif changed in ('show_preview',):
                 self.session.request_preview(inputs)
-            elif changed not in ('status','activity','warnings','update_notice'):
+            elif changed not in ('status','activity','warnings','update_notice','install_update'):
                 # Auto Fit bounds/effort are independent of the manual pattern.
                 # Clear stale candidates without disturbing the manual preview.
                 if changed not in ('fit_min_pitch','fit_max_pitch',
@@ -1024,12 +1059,11 @@ class BackgroundResultHandler(adsk.core.CustomEventHandler):
 
 
 def run(context):
-    global _custom_event, _update_checker
+    global _custom_event, _update_checker, _update_installer
     try:
         # Fusion keeps imported helper modules in sys.modules across Add-In
         # Stop/Run cycles. Reload source after files are replaced on disk.
-        if 'geometry_compiled' in sys.modules:
-            importlib.reload(sys.modules['geometry_compiled'])
+        # Compiled GEOS support is disabled; never reload its native module.
         importlib.reload(geometry)
         importlib.reload(fitting)
         importlib.reload(async_engine)
@@ -1045,6 +1079,10 @@ def run(context):
             _update_checker.close()
         _update_checker=update_checker.UpdateChecker(
             _installed_version(),lambda: APP.fireCustomEvent(CUSTOM_EVENT_ID))
+        if _update_installer is not None:
+            _update_installer.close()
+        _update_installer=update_checker.UpdateInstaller(
+            Path(__file__).parent, lambda: APP.fireCustomEvent(CUSTOM_EVENT_ID))
         workspace=UI.workspaces.itemById(WORKSPACE_ID)
         panel=workspace.toolbarPanels.itemById(PANEL_ID)
         if panel is None:raise RuntimeError('Cannot locate the Solid > Add-Ins panel.')
@@ -1062,7 +1100,10 @@ def run(context):
 
 
 def stop(context):
-    global _custom_event, _update_checker
+    global _custom_event, _update_checker, _update_installer
+    if _update_installer is not None:
+        _update_installer.close()
+        _update_installer=None
     if _update_checker is not None:
         _update_checker.close()
         _update_checker=None

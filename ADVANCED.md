@@ -1,84 +1,70 @@
 # Advanced notes
 
-Technical details, optional dependencies, diagnostics and development information for `fusion360-isogrid`. For installation and ordinary use, see the [README](README.md).
+This file covers implementation details for `fusion360-isogrid`. See the [README](README.md) for installation and normal use.
 
-## Geometry and final features
+## Geometry
 
-The add-in extracts planar boundary loops (including interior holes) from Fusion, then uses a 2D pattern generator to build and clip triangular pockets. The same generator is used for manual previews, Auto Fit scoring and final output.
+The add-in converts the selected planar face, voids and optional sketch boundaries into a 2D usable region. It builds and clips a triangular pocket lattice, then applies corner rounding. The final feature is a Fusion sketch plus a single extrusion cut at the user-entered depth.
 
-Boundary preparation caches the permitted area with perimeter margins and hole clearances. Completely interior pockets are accepted directly; boundary-adjacent pockets are clipped against the prepared region. Rounded corners are applied to the clipped results.
-
-At completion, the add-in creates a Fusion sketch with the pocket outlines and one multi-profile cut extrusion, using the selected depth. The result is an ordinary Fusion timeline feature.
-
-With **Trim to boundary / voids** enabled (default), pockets respect the face, optional sketch boundary and clearances. Disabling trimming retains full triangle and circle outlines extending across the selected region's bounding extent; this is intended for manual trimming. The final cut is still attempted, and overlapping profiles or protected regions may require manual cleanup.
-
-When a clipped corner cannot fit the specified radius, available corners are rounded and the pocket is retained. Any remaining sharp corners are reported in the UI. Those corners may require manual adjustment before machining with a cutter of the specified radius. Vertex holes approaching or exceeding rib width can similarly create overlapping or unusable cut profiles.
+With trimming disabled, the 2D grid extends across the selected region's bounding extent. Overlapping profiles may need manual correction before machining. In trimmed mode, small fragments and corners unable to accept the full rounding radius are reported as warnings; feasible pocket geometry is preserved.
 
 ## Auto Fit
 
-Auto Fit is optional and writes selected results back into the usual pitch and placement controls. It searches cell pitch between user-defined bounds, X/Y lattice phase, and optionally rotation.
-
-A deterministic, bounded differential-evolution search evaluates the *actual 2D pocket generator* for each candidate. Independent searches target:
-
-- Maximum removed area
-- Cleaner perimeter termination
-- Symmetry
-- Closeness to nominal pitch
-
-The command offers 120, 320 or 1,000 evaluation budgets and returns distinct candidate layouts. Extrusion depth is excluded from the search, as this is a 2D layout problem.
+An optional deterministic bounded differential-evolution search evaluates the same 2D geometry that is used for the final cut. It searches pitch within user-defined limits, lattice phase and optionally rotation. It returns candidates selected for removed area, boundary quality, symmetry and closeness to nominal pitch. The extrusion depth does not participate in this 2D search.
 
 ## Geometry backend
 
-The add-in currently uses the dependency-free, prepared-region Python geometry engine exclusively. No additional packages are required.
+The add-in currently uses its dependency-free, prepared-region Python geometry engine exclusively. No additional packages are required.
 
-The Shapely/GEOS implementation remains in `geometry_compiled.py`. Its import and Fusion UI selector are commented out in `geometry.py` and `fusion360-isogrid.py`, respectively. The native backend is deliberately disabled because incompatible compiled packages may crash Fusion during import. `install_backend.py` is retained for potential future development, rather than as a supported installation step.
+An optional Shapely/GEOS implementation remains in `geometry_compiled.py`, alongside its inactive loader and backend-selector code (commented out in `geometry.py` and `fusion360-isogrid.py`). The compiled backend is **disabled**, including its import at startup, because an incompatible native library can crash Fusion. `install_backend.py` is retained for possible future development, rather than as a supported installation step.
 
-## Asynchronous preview
+## Background processing and update notice
 
-The add-in runs 2D pattern and Auto Fit work on a dedicated Python background thread. Rapid parameter edits supersede pending previews; completed results are transferred to Fusion's main thread through a custom event. Fusion sketch construction, preview graphics and extrusion creation remain on the main thread.
+2D preview and Auto Fit calculations run in a dedicated Python thread, with custom events returning results to Fusion's main thread. CAD feature creation and viewport graphics remain on the main thread. Obsolete preview calculations are superseded by newer edits.
 
-The indicator reports idle, working, ready or error, and Auto Fit progress. This thread-based design improves UI responsiveness; it is not the same as process-based multicore parallelism for Python work.
+When the user **opens the isogrid command**, a separate short-lived thread checks the version in the public GitHub `main` manifest. A newer version appears as a clickable notice in the command dialog. Results are cached for 30 minutes. Network failures are silent. No code is downloaded, replaced or executed by the updater. Version numbers must be increased in the manifest when publishing a new version.
 
-## Update availability check
-
-When the user opens the command, a short-lived background thread reads the version from the public GitHub `main` manifest. Results are cached for 30 minutes, and network failures leave the command unaffected. A newer version appears as a hyperlink in the dialog. No files are downloaded or installed automatically.
-
-Increment the `version` in `fusion360-isogrid.manifest` when publishing a new version. The check requires no GitHub API token and makes no periodic network requests.
-
-## Development and tests
-
-Source layout:
-
-| File | Responsibility |
-| --- | --- |
-| `fusion360-isogrid.py` | Fusion UI, preview and final sketch/cut |
-| `async_engine.py` | Background work, cancellation and result delivery |
-| `geometry.py` | Shared 2D geometry and pure-Python clipping |
-| `geometry_compiled.py` | Optional Shapely/GEOS operations |
-| `fitting.py` | Auto Fit optimiser and objectives |
-| `install_backend.py` | Optional dependency installer |
-| `benchmarks.py` | Comparable layout-performance benchmarks |
-| `tests/` | Geometry, optimisation, lifecycle and validation regressions |
-
-From the repository directory:
+## Tests
 
 ```sh
 python -m unittest discover -s tests -v
 python benchmarks.py
 ```
 
-The 0.6.3 standalone suite has 50 tests. These cover polygon clipping, irregular boundaries, rounded corners, hole exclusions, Auto Fit, asynchronous cancellation and simulated preview lifecycle. Fusion-specific UI and final CAD operations need in-application validation.
+The tests run outside Fusion; the UI and CAD creation still require verification in Fusion itself.
 
-### Reference benchmark
+## Source files
 
-Matched 20-layout workload measured outside Fusion during the v0.5 geometry refactor:
+- `fusion360-isogrid.py`: Fusion command, preview and final feature
+- `geometry.py`: pure Python geometry engine
+- `geometry_compiled.py`: archived, disabled GEOS clipping implementation
+- `fitting.py`: Auto Fit optimiser
+- `async_engine.py`: preview worker and results
+- `update_checker.py`: on-demand, non-blocking GitHub version notification
+- `install_backend.py`: archived optional dependency installer
+- `tests/`: geometry, fitting and lifecycle tests
 
-| Geometry | Python per layout | GEOS per layout |
-| --- | ---: | ---: |
-| 100 × 100 mm rectangle | 6.1 ms | 4.4 ms |
-| Rectangle with a circular void | 14.8 ms | 5.7 ms |
-| Curved perimeter with three voids | 38.5 ms | 17.5 ms |
 
-These figures exclude one-time preparation. They describe that development environment, rather than guaranteed Fusion performance.
+## Update installation
 
-For historical changes, see the [changelog](CHANGELOG.md).
+The command checks the version in the public repository manifest when opened,
+with a 30-minute cache. **Install Update** downloads the repository ZIP from
+GitHub in a background thread. It validates the archive layout, add-in ID, and
+expected version before writing files. Source files are staged on the same
+volume and backed up for rollback if a write fails. Local `vendor/` and
+other additional user files are left unchanged. Restart Fusion after the update;
+loaded Python modules are deliberately not replaced in memory. The operation
+requires write access to the add-in directory and HTTPS access to GitHub.
+
+## Advisory fields
+
+Geometry warnings are non-blocking. Fusion's native `isValueError` styling
+can also disable the OK button, so warnings use input tooltips and the Geometry
+warnings area instead. Invalid geometry can still cause a descriptive feature
+generation error when OK is pressed.
+
+For an interior lattice junction with equilateral triangles and feasible
+pocket fillets, the maximum nominal vertex-hole diameter is
+`2 × (rib width + corner radius)`. A hole at that limit touches the pockets
+and may create coincident sketch geometry. Boundaries and neighbouring
+existing holes can impose additional constraints.

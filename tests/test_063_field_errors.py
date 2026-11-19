@@ -71,10 +71,12 @@ class ErrorHighlightTests(unittest.TestCase):
         with patch.object(self.ui, '_units_manager', return_value=Units()):
             self.ui._refresh_field_feedback(inputs)
 
-    def test_vertex_hole_red_and_warning_but_ok_stays_enabled(self):
-        inputs = Inputs(nodehole='5 mm')
+    def test_vertex_hole_warning_keeps_ok_enabled(self):
+        inputs = Inputs(nodehole='9 mm')
+        inputs.itemById('nodehole').isValueError = True  # stale earlier state
         self.refresh(inputs)
-        self.assertTrue(inputs.itemById('nodehole').isValueError)
+        self.assertFalse(inputs.itemById('nodehole').isValueError)
+        self.assertIn('Check Geometry warnings', inputs.itemById('nodehole').tooltip)
         self.assertIn('Vertex hole diameter', inputs.itemById('warnings').text)
         args = SimpleNamespace(inputs=inputs, areInputsValid=False)
         with patch.object(self.ui, '_units_manager', return_value=Units()):
@@ -84,36 +86,40 @@ class ErrorHighlightTests(unittest.TestCase):
     def test_too_thick_rib_marks_both_contributing_fields(self):
         inputs = Inputs(pitch='20 mm', rib='15 mm')
         self.refresh(inputs)
-        self.assertTrue(inputs.itemById('pitch').isValueError)
-        self.assertTrue(inputs.itemById('rib').isValueError)
+        self.assertFalse(inputs.itemById('pitch').isValueError)
+        self.assertFalse(inputs.itemById('rib').isValueError)
+        self.assertTrue(inputs.itemById('rib').tooltip)
         self.assertIn('Rib width', inputs.itemById('warnings').text)
 
-    def test_corner_radius_is_highlighted(self):
+    def test_corner_radius_shows_tooltip_without_native_error(self):
         inputs = Inputs(corner='8 mm')
         self.refresh(inputs)
-        self.assertTrue(inputs.itemById('corner').isValueError)
+        self.assertFalse(inputs.itemById('corner').isValueError)
+        self.assertTrue(inputs.itemById('corner').tooltip)
         self.assertFalse(inputs.itemById('nodehole').isValueError)
 
     def test_bad_expression_highlights_field_and_reports_it(self):
         inputs = Inputs(rib='a very bad expression')
         self.refresh(inputs)
-        self.assertTrue(inputs.itemById('rib').isValueError)
+        self.assertFalse(inputs.itemById('rib').isValueError)
         self.assertIn('rib: invalid expression', inputs.itemById('warnings').text)
 
     def test_highlight_is_removed_when_values_are_corrected(self):
-        inputs = Inputs(nodehole='7 mm')
+        inputs = Inputs(nodehole='8 mm')
         self.refresh(inputs)
-        self.assertTrue(inputs.itemById('nodehole').isValueError)
+        self.assertTrue(inputs.itemById('nodehole').tooltip)
         inputs.itemById('nodehole').value='1 mm'
         self.refresh(inputs)
         self.assertFalse(inputs.itemById('nodehole').isValueError)
+        self.assertEqual(inputs.itemById('nodehole').tooltip,'')
         self.assertEqual(inputs.itemById('warnings').text,'No geometric warnings.')
 
     def test_bad_fit_limits_flag_both_fields(self):
         inputs = Inputs(fit_min_pitch='28 mm',fit_max_pitch='16 mm')
         self.refresh(inputs)
-        self.assertTrue(inputs.itemById('fit_min_pitch').isValueError)
-        self.assertTrue(inputs.itemById('fit_max_pitch').isValueError)
+        self.assertFalse(inputs.itemById('fit_min_pitch').isValueError)
+        self.assertFalse(inputs.itemById('fit_max_pitch').isValueError)
+        self.assertTrue(inputs.itemById('fit_min_pitch').tooltip)
         self.assertIn('minimum < maximum', inputs.itemById('warnings').text)
 
     def test_optimiser_update_keeps_unit_expressions(self):
