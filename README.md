@@ -33,7 +33,7 @@ When you open the command, it checks GitHub for a newer version and shows a link
 
 The depth is shared by all pockets. Existing face holes are treated as exclusions when boundary trimming is enabled. Some tight clipped corners may remain sharp if the requested radius cannot fit; the add-in reports these in **Geometry warnings**.
 
-**Current scope:** Planar faces.
+**Current scope:** Planar faces. Pure-Python geometry; no additional dependencies.
 
 ## More information
 

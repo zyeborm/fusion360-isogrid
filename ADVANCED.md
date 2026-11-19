@@ -27,27 +27,11 @@ A deterministic, bounded differential-evolution search evaluates the *actual 2D 
 
 The command offers 120, 320 or 1,000 evaluation budgets and returns distinct candidate layouts. Extrusion depth is excluded from the search, as this is a 2D layout problem.
 
-## Geometry backends
+## Geometry backend
 
-The add-in works without third-party packages. The **Geometry backend** setting provides:
+The add-in currently uses the dependency-free, prepared-region Python geometry engine exclusively. No additional packages are required.
 
-| Choice | Behaviour |
-| --- | --- |
-| Automatic (default) | Uses GEOS when available; otherwise pure Python |
-| Pure Python | Uses the bundled dependency-free geometry engine |
-| GEOS accelerated | Requires optional Shapely/NumPy compiled wheels |
-
-Both backends share lattice generation, rounding, vertex-hole handling and scoring. They differ in how permitted regions and clipping operations are constructed. Marginal geometries can produce slightly different results, especially near offset, sliver or corner-radius thresholds.
-
-### Optional compiled backend installation
-
-With Fusion closed, open a terminal in the installed add-in folder and run:
-
-```sh
-python install_backend.py
-```
-
-The installer downloads matching binary wheels into the local `vendor/` folder. It targets Fusion's embedded Python runtime rather than your terminal Python. Restart Fusion afterwards. The installer does not change the Fusion installation or system Python packages.
+The Shapely/GEOS implementation remains in `geometry_compiled.py`. Its import and Fusion UI selector are commented out in `geometry.py` and `fusion360-isogrid.py`, respectively. The native backend is deliberately disabled because incompatible compiled packages may crash Fusion during import. `install_backend.py` is retained for potential future development, rather than as a supported installation step.
 
 ## Asynchronous preview
 

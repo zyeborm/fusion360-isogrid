@@ -4,9 +4,9 @@
   "id": "9b70f5e1-4653-4c46-a2d8-fd0ee68e23a1",
   "author": "OpenAI / User",
   "description": {
-    "": "Planar isogrid finishing feature with geometry-prepared auto fitting and optional accelerated GEOS clipping."
+    "": "Planar isogrid finishing feature with automatic fitting and pure-Python geometry."
   },
-  "version": "0.6.4",
+  "version": "0.6.5",
   "runOnStartup": false,
   "supportedOS": "windows|mac"
 }

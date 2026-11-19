@@ -7,20 +7,19 @@ intersection with one or more regions. This permits both face and sketch masks.
 from __future__ import annotations
 import math
 from dataclasses import dataclass
-import os
-import sys
-
-# A matching CPython wheel can be unpacked into vendor/ by install_backend.py.
-# It is local to this add-in and does not modify Fusion's Python installation.
-_vendor = os.path.join(os.path.dirname(__file__), 'vendor')
-if os.path.isdir(_vendor) and _vendor not in sys.path:
-    sys.path.insert(0, _vendor)
-
-try:
-    from geometry_compiled import PreparedArea as _CompiledArea
-except (ImportError, OSError):
-    # The add-in remains usable without compiled third-party libraries.
-    _CompiledArea = None
+# GEOS/Shapely support is deliberately disabled for now. An incompatible native
+# wheel can terminate Fusion outright during import. Keep this integration for
+# reconsideration later, but never load the compiled modules in this release.
+# import os
+# import sys
+# _vendor = os.path.join(os.path.dirname(__file__), 'vendor')
+# if os.path.isdir(_vendor) and _vendor not in sys.path:
+#     sys.path.insert(0, _vendor)
+# try:
+#     from geometry_compiled import PreparedArea as _CompiledArea
+# except (ImportError, OSError):
+#     _CompiledArea = None
+_CompiledArea = None
 
 
 def geometry_backend(backend="auto"):

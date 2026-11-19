@@ -2,6 +2,11 @@
 
 Key changes by release. [Getting started](README.md) · [Technical notes](ADVANCED.md)
 
+## 0.6.5 — Pure-Python backend only
+
+- Disabled GEOS imports and removed the compiled-backend selector to avoid native-extension crashes.
+- Retained the commented integration and compiled implementation for potential future use.
+
 ## 0.6.4 — Update availability notice
 
 - Check GitHub's published manifest when the Fusion command opens.

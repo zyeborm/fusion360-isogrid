@@ -211,12 +211,14 @@ def _inputs_to_settings(inputs):
     settings={key:_input_number(inputs,key,units) for key in ids}
     settings['depth_expression']=_input_expression(inputs,'depth')
     settings['trim_boundary']=inputs.itemById('trim_boundary').value
-    for key in ('origin_mode','anchor','alignment','backend_choice'):
+    for key in ('origin_mode','anchor','alignment'):
         selected=inputs.itemById(key).selectedItem
         settings[key]=selected.name if selected else ''
-    settings['backend']={'Automatic':'auto',
-                         'Pure Python':'python',
-                         'GEOS accelerated':'geos'}[settings['backend_choice']]
+    # Optional GEOS backend selector disabled until compiled-wheel safety is resolved.
+    # settings['backend']={'Automatic':'auto',
+    #                      'Pure Python':'python',
+    #                      'GEOS accelerated':'geos'}[settings['backend_choice']]
+    settings['backend']='python'
     return settings
 
 
@@ -861,8 +863,9 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
             origin_point.setSelectionLimits(0,1)
             dropdown('anchor','Align origin to',('Grid vertex','Triangle centre'))
             dropdown('alignment','Grid alignment',('Face local axes','Selected edge'))
-            dropdown('backend_choice','Geometry backend',
-                     ('Automatic','Pure Python','GEOS accelerated'))
+            # GEOS backend selection is disabled; pure Python is always used.
+            # dropdown('backend_choice','Geometry backend',
+            #          ('Automatic','Pure Python','GEOS accelerated'))
             align_edge=inputs.addSelectionInput('align_edge','Alignment edge',
                         'Select a straight model edge or sketch line to align the grid X axis')
             align_edge.addSelectionFilter('LinearEdges')

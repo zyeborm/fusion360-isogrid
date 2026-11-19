@@ -56,13 +56,10 @@ class PureBackendTests(unittest.TestCase):
         auto=g.PreparedGeometry([self.region],.2,.25)
         pure=g.PreparedGeometry([self.region],.2,.25,backend='python')
         self.assertEqual(pure.backend,'python')
-        self.assertEqual(auto.backend,'geos' if g._CompiledArea else 'python')
-        if g._CompiledArea is None:
-            with self.assertRaises(RuntimeError):
-                g.PreparedGeometry([self.region],.2,.25,backend='geos')
-        else:
-            forced=g.PreparedGeometry([self.region],.2,.25,backend='geos')
-            self.assertEqual(forced.backend,'geos')
+        self.assertIsNone(g._CompiledArea)
+        self.assertEqual(auto.backend,'python')
+        with self.assertRaises(RuntimeError):
+            g.PreparedGeometry([self.region],.2,.25,backend='geos')
 
     def test_de_search_runs_on_python_prepared_engine(self):
         settings=dict(pitch=2.,rib=.2,perimeter=.2,holeclear=.25,
