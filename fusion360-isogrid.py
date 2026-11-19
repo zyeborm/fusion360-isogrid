@@ -27,7 +27,7 @@ COMMAND_ID = 'fusion360_isogrid_create'
 COMMAND_NAME = 'fusion360-isogrid'
 # Keep the version in the running Python code, not in the on-disk manifest:
 # the updater replaces that manifest while this old code remains loaded.
-RUNNING_VERSION = '0.7.2'
+RUNNING_VERSION = '0.7.3'
 COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -142,7 +142,7 @@ def _set_input_number(inputs, key, internal_value):
 
 
 def _auto_vertex_hole(inputs):
-    """Set the nominal largest vertex-hole diameter for rounded 60° pockets.
+    """Set a vertex-hole diameter preserving rib-width material at each pocket.
 
     All dimensions are Fusion internal centimetres. Reuse the same geometric
     limit as the field advisories and preserve expression/unit formatting.
@@ -399,14 +399,19 @@ def _geometry_warnings(s, outlines=None):
             messages.append('Pocket corner radius exceeds the space available inside a full cell; sharp corners may remain.')
     if hole>0 and rib>0 and corner>=0:
         diameter_limit=geometry.maximum_vertex_hole_diameter(rib,corner)
-        if hole>diameter_limit+1e-7:
+        tangency_limit=geometry.vertex_hole_tangency_diameter(rib,corner)
+        if hole>tangency_limit+1e-7:
             messages.append(
-                f'Vertex hole diameter exceeds the nominal rounded-junction maximum '
-                f'({diameter_limit*10:.3g} mm = 2 × (rib width + corner radius)); '
-                'circles may overlap triangular pockets.')
-        elif abs(hole-diameter_limit)<=1e-7:
+                f'Vertex hole diameter exceeds the rounded-pocket contact limit '
+                f'({tangency_limit*10:.3g} mm); circles may overlap triangular pockets.')
+        elif abs(hole-tangency_limit)<=1e-7:
             messages.append('Vertex hole is tangent to the rounded pockets; '
-                            'zero clearance may create coincident sketch profiles.')
+                            'the minimum web thickness is zero and coincident sketch profiles may result.')
+        elif hole>diameter_limit+1e-7:
+            messages.append(
+                'Vertex hole leaves less than the specified rib width of material '
+                f'between hole and pocket (minimum web {rib*10:.3g} mm; '
+                f'Auto Max Hole {diameter_limit*10:.3g} mm).')
     if hole<0:messages.append('Vertex-hole diameter must be non-negative.')
     if s['depth']<=0:messages.append('Extrusion depth must be positive for a cut.')
     for field,title in [('perimeter','Perimeter margin'),('holeclear','Void clearance'),
@@ -1027,7 +1032,7 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
                 'dy':('Y start offset','0 mm','mm'),
                 'angle':('Grid rotation','0 deg','deg'),
                 'corner':('Pocket corner radius','1.5 mm','mm'),
-                'nodehole':('Vertex hole diameter (0 = off)','5 mm','mm'),
+                'nodehole':('Vertex hole diameter (0 = off)','3 mm','mm'),
                 'minfraction':('Minimum pocket area (%)','5',''),
             }
             for key,(title,value,units) in defaults.items():
@@ -1041,9 +1046,9 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
                     auto_hole = inputs.addBoolValueInput(
                         'auto_nodehole', 'Auto Max Hole', False, '', False)
                     auto_hole.tooltip = (
-                        'Set vertex hole diameter to 2 × (rib width + pocket corner radius). '
-                        'At this theoretical maximum the hole is tangent to full-cell pockets; '
-                        'reduce it slightly if Fusion needs profile clearance.')
+                        'Set the largest nominal hole that preserves a minimum web equal '
+                        'to rib width between the circular hole and adjacent rounded pockets. '
+                        'For feasible 60° full-cell fillets this is 2 × corner radius.')
             inputs.addBoolValueInput('trim_boundary','Trim to boundary / voids',True,'',True)
             inputs.addStringValueInput('fit_min_pitch','Auto Fit minimum pitch','16 mm')
             inputs.addStringValueInput('fit_max_pitch','Auto Fit maximum pitch','28 mm')

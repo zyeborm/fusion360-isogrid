@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.3 — Preserve rib-width web around vertex holes
+
+- Corrected **Auto Max Hole** to reserve an edge-to-edge web equal to the rib width, rather than using the pocket-contact diameter. For feasible 60° pocket fillets, `D_auto = 2 × corner radius`.
+- Distinguished insufficient-web warnings from zero-clearance tangency and actual overlapping cuts. Warnings remain advisory and leave OK enabled.
+- Changed the default hole diameter to 3 mm, matching the 2 mm rib / 1.5 mm fillet defaults.
+- Added regression tests for radial web thickness, diameter calculation and button behaviour.
+
 ## 0.7.2 — Vertex-hole default and Auto Max Hole
 
 - Default vertex hole diameter is now 5 mm (previously disabled by default).

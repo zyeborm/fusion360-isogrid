@@ -36,18 +36,29 @@ EPS = 1e-8
 SQRT3 = math.sqrt(3.0)
 
 
-def maximum_vertex_hole_diameter(rib_width, corner_radius):
-    """Nominal hole clearance between equilateral rounded pocket corners.
+def vertex_hole_tangency_diameter(rib_width, corner_radius):
+    """Circle diameter that would touch a rounded 60-degree pocket corner.
 
-    The inset triangular pocket vertex lies `rib_width` from its original
-    lattice junction (two edges each offset by rib_width/2). A 60-degree
-    internal fillet moves the nearest point of the pocket boundary away from
-    that junction by an additional `corner_radius`. Thus the largest circle
-    centred on an interior junction, tangent to six pockets, has diameter
-    2 * (rib_width + corner_radius). This assumes a feasible full-cell fillet;
-    margins and local trimming can only remove pocket material.
+    The inset triangular pocket's nearest point is `rib_width` from the
+    lattice junction, plus the pocket's feasible corner fillet radius.
+    This is a *contact* limit, not a web-preserving hole size.
     """
     return 2.0 * (rib_width + max(0.0, corner_radius))
+
+
+def maximum_vertex_hole_diameter(rib_width, corner_radius):
+    """Nominal largest junction hole preserving a full rib-width radial web.
+
+    Each side of the hole needs at least `rib_width` of material between its
+    circumference and the nearest triangular pocket. Because hole diameter
+    measures *both* sides, subtract twice the required web from the diameter
+    at tangency: 2*(rib_width + corner_radius) - 2*rib_width = 2*corner_radius.
+
+    This is an ideal interior-junction limit for feasible full-cell fillets;
+    boundary clipping, tight pockets and neighbouring holes can constrain it.
+    """
+    return max(0.0, vertex_hole_tangency_diameter(rib_width, corner_radius)
+               - 2.0 * rib_width)
 
 
 def sub(a, b): return (a[0] - b[0], a[1] - b[1])

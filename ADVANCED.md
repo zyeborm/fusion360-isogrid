@@ -22,9 +22,11 @@ With trimming disabled, the 2D grid extends across the selected region's boundin
 
 ## Vertex holes
 
-Vertex holes default to 5 mm, with the existing manual diameter field remaining editable. **Auto Max Hole** is a one-shot command that uses the current rib width `w` and pocket fillet radius `r` to set the theoretical interior-junction limit `D = 2(w + r)` (a 7 mm hole for the default 2 mm ribs and 1.5 mm fillets). The calculation uses the same geometry rule as the advisory warnings and updates the preview immediately.
+Vertex holes default to 3 mm, with the existing manual diameter field remaining editable. **Auto Max Hole** is a one-shot command that reserves a **minimum radial web equal to the specified rib width** between the hole and the nearest rounded pocket.
 
-The exact limit produces tangency to ideal full-cell pocket fillets, with zero nominal clearance. A slightly smaller manual value can avoid coincident profiles in Fusion. The formula assumes the chosen radius fits inside the triangular pocket; tight clipped pockets and boundary clearance remain subject to the usual geometry checks.
+For equilateral pockets with feasible fillets, the *contact* diameter is `D_contact = 2(w + r)`, where `w` is rib width and `r` is pocket corner radius. A minimum web `w` is required on **both sides of the hole's diameter**, so the web-preserving maximum is `D_auto = max(0, D_contact - 2w) = 2r`. Thus 2 mm ribs and 1.5 mm fillets give a 7 mm *contact* diameter but a 3 mm Auto Max Hole diameter, leaving 2 mm of material to the nearest pocket. Subtracting the rib width only once would leave half the intended web thickness.
+
+The calculation is nominal for ideal interior junctions. Tight or clipped pocket corners can alter actual clearance; boundary restrictions and neighbouring holes are handled separately. The button updates the preview immediately and leaves the result manually editable. Diameter values above the web-preserving limit produce non-blocking warnings; at the contact limit the warning identifies tangency, and beyond it overlapping cuts.
 
 ## Auto Fit
 
@@ -84,7 +86,7 @@ warnings area instead. Invalid geometry can still cause a descriptive feature
 generation error when OK is pressed.
 
 For an interior lattice junction with equilateral triangles and feasible
-pocket fillets, the maximum nominal vertex-hole diameter is
-`2 × (rib width + corner radius)`. A hole at that limit touches the pockets
-and may create coincident sketch geometry. Boundaries and neighbouring
-existing holes can impose additional constraints.
+pocket fillets, the contact diameter is `2 × (rib width + corner radius)`.
+**Auto Max Hole** subtracts twice the rib width from this diameter to retain
+the specified minimum material web on both radial sides. Boundaries and
+neighbouring existing holes can impose additional constraints.

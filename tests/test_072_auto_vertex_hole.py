@@ -21,15 +21,15 @@ class AutoVertexHoleTests(unittest.TestCase):
         inputs = Inputs(rib='3 mm', corner='2 mm', nodehole='1 mm')
         with patch.object(self.ui, '_units_manager', return_value=Units()):
             result = self.ui._auto_vertex_hole(inputs)
-        self.assertAlmostEqual(result, 1.0)  # internal cm: 10 mm
-        self.assertEqual(inputs.itemById('nodehole').value, '10 mm')
+        self.assertAlmostEqual(result, .4)  # internal cm: 4 mm
+        self.assertEqual(inputs.itemById('nodehole').value, '4 mm')
 
-    def test_default_dimensions_yield_7mm_maximum(self):
+    def test_default_dimensions_yield_3mm_web_preserving_maximum(self):
         inputs = Inputs(nodehole='5 mm')
         with patch.object(self.ui, '_units_manager', return_value=Units()):
-            self.assertAlmostEqual(self.ui._auto_vertex_hole(inputs), .7)
-        self.assertEqual(inputs.itemById('nodehole').value, '7 mm')
-        self.assertAlmostEqual(geometry.maximum_vertex_hole_diameter(.2,.15), .7)
+            self.assertAlmostEqual(self.ui._auto_vertex_hole(inputs), .3)
+        self.assertEqual(inputs.itemById('nodehole').value, '3 mm')
+        self.assertAlmostEqual(geometry.maximum_vertex_hole_diameter(.2,.15), .3)
 
     def test_invalid_dimensions_leave_manually_entered_diameter_unchanged(self):
         for rib, corner in [('-1 mm','1 mm'), ('2 mm','-1 mm'), ('bad','1 mm')]:
@@ -49,7 +49,7 @@ class AutoVertexHoleTests(unittest.TestCase):
         with patch.object(self.ui, '_units_manager', return_value=Units()), \
              patch.object(self.ui, '_refresh_field_feedback') as feedback:
             self.ui.ChangedHandler(session).notify(event)
-        self.assertEqual(inputs.itemById('nodehole').value, '7 mm')
+        self.assertEqual(inputs.itemById('nodehole').value, '3 mm')
         self.assertFalse(inputs.itemById('auto_nodehole').value)
         self.assertFalse(session.updating)
         session.invalidate_fits.assert_called_once_with(inputs)
@@ -74,7 +74,7 @@ class AutoVertexHoleTests(unittest.TestCase):
             self.ui.CreatedHandler().notify(SimpleNamespace(command=command))
             del self.ui._sessions[before:]
         string_calls=[c.args for c in command.commandInputs.addStringValueInput.call_args_list]
-        self.assertIn(('nodehole', 'Vertex hole diameter (0 = off)', '5 mm'), string_calls)
+        self.assertIn(('nodehole', 'Vertex hole diameter (0 = off)', '3 mm'), string_calls)
         button_calls=[c.args for c in command.commandInputs.addBoolValueInput.call_args_list]
         self.assertIn(('auto_nodehole', 'Auto Max Hole', False, '', False), button_calls)
         self.assertEqual(json.loads((ROOT/'fusion360-isogrid.manifest').read_text())['version'],
