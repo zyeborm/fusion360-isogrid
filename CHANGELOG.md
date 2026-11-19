@@ -2,6 +2,12 @@
 
 Key changes by release. [Getting started](README.md) · [Technical notes](ADVANCED.md)
 
+## 0.6.4 — Update availability notice
+
+- Check GitHub's published manifest when the Fusion command opens.
+- Show a clickable update notice for newer versions; installation remains manual.
+- Run the check asynchronously, caching results and ignoring network failures.
+
 ## 0.6.3 — Field-level warnings
 
 - Geometry-sensitive text fields use Fusion's native invalid-input appearance.

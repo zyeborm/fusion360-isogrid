@@ -12,11 +12,13 @@ import sys
 import importlib
 import traceback
 import html
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
 import geometry
 import fitting
 import async_engine
+import update_checker
 
 APP = adsk.core.Application.get()
 UI = APP.userInterface
@@ -29,6 +31,32 @@ CUSTOM_EVENT_ID = 'fusion360_isogrid_worker_9b70f5e1'
 _handlers = []
 _sessions = []
 _custom_event = None
+_update_checker = None
+
+
+def _installed_version():
+    with open(Path(__file__).with_suffix('.manifest'), encoding='utf-8') as file:
+        return str(json.load(file)['version'])
+
+
+def _show_update_notice(session):
+    """Only called from Fusion's main thread."""
+    if not session.alive or session.inputs is None or _update_checker is None:
+        return
+    control = session.inputs.itemById('update_notice')
+    if control is None:
+        return
+    newer = _update_checker.available()
+    if getattr(session, '_shown_update', None) == newer:
+        return
+    session._shown_update = newer
+    if newer:
+        control.formattedText = (
+            f'<b>Isogrid {html.escape(newer)} is available.</b> '
+            f'<a href="{update_checker.REPOSITORY_URL}">View update on GitHub</a>')
+        control.isVisible = True
+    else:
+        control.isVisible = False
 
 # Fusion ValueCommandInput colours invalid expressions automatically, but it
 # cannot be marked invalid for *geometric* (cross-field) warnings without
@@ -541,6 +569,7 @@ class Session:
     """Main-thread Fusion state; geometry work is delegated to LatestWorker."""
     def __init__(self):
         self.command = None
+        self._shown_update = None
         self.graphics = None
         self.cache = None
         self.cache_signature = None
@@ -877,6 +906,8 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
             inputs.addTextBoxCommandInput('status','Pattern','Select a planar face to preview.',3,True)
             inputs.addTextBoxCommandInput('warnings','Geometry warnings',
                 'No geometric warnings.',5,True)
+            notice=inputs.addTextBoxCommandInput('update_notice','Update','',2,True)
+            notice.isVisible=False
             _refresh_field_feedback(inputs)
             _update_placement_visibility(inputs)
             session=Session();session.inputs=inputs;session.command=command
@@ -888,6 +919,9 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
                       (command.validateInputs,ValidateHandler())]
             for event,handler in handlers:
                 event.add(handler);_handlers.append(handler)
+            if _update_checker is not None:
+                _update_checker.check_on_open()
+                _show_update_notice(session)
         except:
             UI.messageBox('Isogrid command setup failed:\n'+traceback.format_exc())
 
@@ -919,7 +953,7 @@ class ChangedHandler(adsk.core.InputChangedEventHandler):
                     self.session.apply_fit(inputs,selected.index)
             elif changed in ('show_preview',):
                 self.session.request_preview(inputs)
-            elif changed not in ('status','activity','warnings'):
+            elif changed not in ('status','activity','warnings','update_notice'):
                 # Auto Fit bounds/effort are independent of the manual pattern.
                 # Clear stale candidates without disturbing the manual preview.
                 if changed not in ('fit_min_pitch','fit_max_pitch',
@@ -982,10 +1016,12 @@ class BackgroundResultHandler(adsk.core.CustomEventHandler):
         for session in list(_sessions):
             try:session.consume()
             except Exception:APP.log('Isogrid custom-event failure:\n'+traceback.format_exc())
+            try:_show_update_notice(session)
+            except Exception:APP.log('Isogrid update-notice failure:\n'+traceback.format_exc())
 
 
 def run(context):
-    global _custom_event
+    global _custom_event, _update_checker
     try:
         # Fusion keeps imported helper modules in sys.modules across Add-In
         # Stop/Run cycles. Reload source after files are replaced on disk.
@@ -994,6 +1030,7 @@ def run(context):
         importlib.reload(geometry)
         importlib.reload(fitting)
         importlib.reload(async_engine)
+        importlib.reload(update_checker)
         # Re-registration is safe after an Add-In Stop/Run cycle.
         try: APP.unregisterCustomEvent(CUSTOM_EVENT_ID)
         except: pass
@@ -1001,6 +1038,10 @@ def run(context):
         custom_handler=BackgroundResultHandler()
         _custom_event.add(custom_handler)
         _handlers.append(custom_handler)
+        if _update_checker is not None:
+            _update_checker.close()
+        _update_checker=update_checker.UpdateChecker(
+            _installed_version(),lambda: APP.fireCustomEvent(CUSTOM_EVENT_ID))
         workspace=UI.workspaces.itemById(WORKSPACE_ID)
         panel=workspace.toolbarPanels.itemById(PANEL_ID)
         if panel is None:raise RuntimeError('Cannot locate the Solid > Add-Ins panel.')
@@ -1018,7 +1059,10 @@ def run(context):
 
 
 def stop(context):
-    global _custom_event
+    global _custom_event, _update_checker
+    if _update_checker is not None:
+        _update_checker.close()
+        _update_checker=None
     for session in list(_sessions):session.dispose()
     try:
         ws=UI.workspaces.itemById(WORKSPACE_ID)

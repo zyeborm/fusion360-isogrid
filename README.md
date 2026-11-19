@@ -21,7 +21,7 @@ A Fusion 360 add-in that creates an **isogrid pattern** on a planar face of an e
 
 The command appears under **Solid → Add-Ins → fusion360-isogrid**.
 
-For updates, close Fusion, replace the installed add-in files, and restart Fusion.
+When you open the command, it checks GitHub for a newer version and shows a link if an update is available. To update, close Fusion, replace the add-in files, and restart Fusion.
 
 ## Use
 

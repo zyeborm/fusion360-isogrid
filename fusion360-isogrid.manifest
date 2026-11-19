@@ -6,7 +6,7 @@
   "description": {
     "": "Planar isogrid finishing feature with geometry-prepared auto fitting and optional accelerated GEOS clipping."
   },
-  "version": "0.6.3",
+  "version": "0.6.4",
   "runOnStartup": false,
   "supportedOS": "windows|mac"
 }

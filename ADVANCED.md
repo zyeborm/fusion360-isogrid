@@ -55,6 +55,12 @@ The add-in runs 2D pattern and Auto Fit work on a dedicated Python background th
 
 The indicator reports idle, working, ready or error, and Auto Fit progress. This thread-based design improves UI responsiveness; it is not the same as process-based multicore parallelism for Python work.
 
+## Update availability check
+
+When the user opens the command, a short-lived background thread reads the version from the public GitHub `main` manifest. Results are cached for 30 minutes, and network failures leave the command unaffected. A newer version appears as a hyperlink in the dialog. No files are downloaded or installed automatically.
+
+Increment the `version` in `fusion360-isogrid.manifest` when publishing a new version. The check requires no GitHub API token and makes no periodic network requests.
+
 ## Development and tests
 
 Source layout:
