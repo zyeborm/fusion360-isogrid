@@ -27,7 +27,7 @@ COMMAND_ID = 'fusion360_isogrid_create'
 COMMAND_NAME = 'fusion360-isogrid'
 # Keep the version in the running Python code, not in the on-disk manifest:
 # the updater replaces that manifest while this old code remains loaded.
-RUNNING_VERSION = '0.7.1'
+RUNNING_VERSION = '0.7.2'
 COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -139,6 +139,24 @@ def _set_input_number(inputs, key, internal_value):
             internal_value, ADVISORY_INPUT_UNITS[key], True)
     else:
         field.value = internal_value
+
+
+def _auto_vertex_hole(inputs):
+    """Set the nominal largest vertex-hole diameter for rounded 60° pockets.
+
+    All dimensions are Fusion internal centimetres. Reuse the same geometric
+    limit as the field advisories and preserve expression/unit formatting.
+    This is an action, not a persistent automatic mode: users can edit the
+    resulting diameter independently afterward.
+    """
+    units = _units_manager()
+    rib = _input_number(inputs, 'rib', units)
+    radius = _input_number(inputs, 'corner', units)
+    if rib <= 0 or radius < 0:
+        raise ValueError('Auto hole size requires a positive rib width and a non-negative corner radius.')
+    maximum = geometry.maximum_vertex_hole_diameter(rib, radius)
+    _set_input_number(inputs, 'nodehole', maximum)
+    return maximum
 
 
 def _p(x, y, z): return adsk.core.Point3D.create(x, y, z)
@@ -1009,7 +1027,7 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
                 'dy':('Y start offset','0 mm','mm'),
                 'angle':('Grid rotation','0 deg','deg'),
                 'corner':('Pocket corner radius','1.5 mm','mm'),
-                'nodehole':('Vertex hole diameter (0 = off)','0 mm','mm'),
+                'nodehole':('Vertex hole diameter (0 = off)','5 mm','mm'),
                 'minfraction':('Minimum pocket area (%)','5',''),
             }
             for key,(title,value,units) in defaults.items():
@@ -1019,6 +1037,13 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
                     vi=(adsk.core.ValueInput.createByString(value) if units
                         else adsk.core.ValueInput.createByReal(5))
                     inputs.addValueInput(key,title,units,vi)
+                if key == 'nodehole':
+                    auto_hole = inputs.addBoolValueInput(
+                        'auto_nodehole', 'Auto Max Hole', False, '', False)
+                    auto_hole.tooltip = (
+                        'Set vertex hole diameter to 2 × (rib width + pocket corner radius). '
+                        'At this theoretical maximum the hole is tangent to full-cell pockets; '
+                        'reduce it slightly if Fusion needs profile clearance.')
             inputs.addBoolValueInput('trim_boundary','Trim to boundary / voids',True,'',True)
             inputs.addStringValueInput('fit_min_pitch','Auto Fit minimum pitch','16 mm')
             inputs.addStringValueInput('fit_max_pitch','Auto Fit maximum pitch','28 mm')
@@ -1080,6 +1105,18 @@ class ChangedHandler(adsk.core.InputChangedEventHandler):
                     self.session.updating=True
                     try:inputs.itemById('install_update').value=False
                     finally:self.session.updating=False
+            elif changed=='auto_nodehole':
+                if inputs.itemById('auto_nodehole').value:
+                    try:
+                        _auto_vertex_hole(inputs)
+                        self.session.invalidate_fits(inputs)
+                        _refresh_field_feedback(inputs)
+                        self.session.request_preview(inputs)
+                    finally:
+                        # Auto is a one-shot button, not an ongoing constraint.
+                        self.session.updating=True
+                        try: inputs.itemById('auto_nodehole').value=False
+                        finally: self.session.updating=False
             elif changed=='find_fits':
                 if inputs.itemById('find_fits').value:
                     try:

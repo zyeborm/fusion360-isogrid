@@ -20,6 +20,12 @@ An unsupported input curve (ellipse, NURBS spline, conic) is currently sampled i
 
 With trimming disabled, the 2D grid extends across the selected region's bounding extent. Overlapping profiles may need manual correction before machining. In trimmed mode, small fragments and corners unable to accept the full rounding radius are reported as warnings; feasible pocket geometry is preserved.
 
+## Vertex holes
+
+Vertex holes default to 5 mm, with the existing manual diameter field remaining editable. **Auto Max Hole** is a one-shot command that uses the current rib width `w` and pocket fillet radius `r` to set the theoretical interior-junction limit `D = 2(w + r)` (a 7 mm hole for the default 2 mm ribs and 1.5 mm fillets). The calculation uses the same geometry rule as the advisory warnings and updates the preview immediately.
+
+The exact limit produces tangency to ideal full-cell pocket fillets, with zero nominal clearance. A slightly smaller manual value can avoid coincident profiles in Fusion. The formula assumes the chosen radius fits inside the triangular pocket; tight clipped pockets and boundary clearance remain subject to the usual geometry checks.
+
 ## Auto Fit
 
 An optional deterministic bounded differential-evolution search evaluates the same 2D geometry that is used for the final cut. It searches pitch within user-defined limits, lattice phase and optionally rotation. It returns candidates selected for removed area, boundary quality, symmetry and closeness to nominal pitch. The extrusion depth does not participate in this 2D search.

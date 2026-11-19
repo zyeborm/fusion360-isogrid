@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.2 — Vertex-hole default and Auto Max Hole
+
+- Default vertex hole diameter is now 5 mm (previously disabled by default).
+- Added a one-shot **Auto Max Hole** button immediately after the diameter field. It sets the theoretical limit `2 × (rib width + corner radius)` using the current expressions and document units.
+- Manual hole diameter edits remain independent after using Auto; preview and geometric advisories update immediately.
+
 ## 0.7.1 — Full-radius fillet repair
 
 - Added an analytic erosion/dilation repair for clipped pockets whose tangent fillets collide along short edges. Narrow tips are removed while the requested cutter radius remains unchanged.
