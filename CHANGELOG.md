@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.1 — Full-radius fillet repair
+
+- Added an analytic erosion/dilation repair for clipped pockets whose tangent fillets collide along short edges. Narrow tips are removed while the requested cutter radius remains unchanged.
+- Reproduced and resolved all six fillet warnings on the supplied rounded-cutout DXF test shape at 20 mm pitch, 2 mm ribs, 3 mm margins and 1.5 mm radius.
+- Added the original line/major-arc/circle geometry as a standard-library regression fixture, checking exact radii, tangent continuity, closed contours and full-pattern output.
+- Truly infeasible pockets still report advisory warnings; they remain available for manual review.
+
 ## 0.7.0 — Exact line/arc planar geometry
 
 - Native lines and circular arcs from Fusion face and sketch boundaries are preserved as exact 2D curves.

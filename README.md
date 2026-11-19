@@ -21,7 +21,7 @@ A Fusion 360 add-in that applies an **isogrid pattern** to a planar face of an e
 
 The command appears in **Solid → Add-Ins → fusion360-isogrid**.
 
-The command title displays the **currently running version** (for example, `fusion360-isogrid v0.7.0`). When a newer version is available, the command shows **Install Update**, including both the current and available versions. After installation, it reports the newly installed version and requests a Fusion restart. Reopen the command after restarting to confirm that the title has changed. Existing dependencies and other local files are preserved.
+The command title displays the **currently running version** (for example, `fusion360-isogrid v0.7.1`). When a newer version is available, the command shows **Install Update**, including both the current and available versions. After installation, it reports the newly installed version and requests a Fusion restart. Reopen the command after restarting to confirm that the title has changed. Existing dependencies and other local files are preserved.
 
 ## Use
 
@@ -31,7 +31,7 @@ The command title displays the **currently running version** (for example, `fusi
 4. Position the grid manually or click **Find Fits** to choose a suggested layout. You can adjust that choice afterwards.
 5. Inspect the preview and click **OK** to create the sketch and cut.
 
-Every pocket uses the same extrusion depth. Existing holes are exclusion areas while boundary trimming is enabled. Tight corners that cannot accommodate the requested radius may remain sharp; the warning area reports them.
+Every pocket uses the same extrusion depth. Existing holes are exclusion areas while boundary trimming is enabled. When two fillets compete for space, the engine removes the interfering narrow tip using exact circular geometry and retains the specified radius. If even this cannot fit, the original pocket is retained with an advisory warning for manual review.
 
 **Current scope:** Planar faces. Lines and circular arcs are processed analytically; other source curves are accepted using sampled approximations. Pure Python; no extra dependencies.
 

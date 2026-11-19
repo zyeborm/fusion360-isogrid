@@ -1122,7 +1122,7 @@ def make_pockets(regions,pitch,rib,perimeter,void_clearance,offset_x,offset_y,
                     continue
                 if signed<=min_area:continue
                 issues=[]
-                curves=_exact.fillet_loop(raw_loop,corner_radius,issues)
+                curves=_exact.rounded_pocket(raw_loop,corner_radius,issues)
                 fillet_warnings+=len(issues)
                 poly=_curves.sample(curves,chord_tolerance=.0004)
                 if len(poly)>=3 and _curves.loop_area(curves)>min_area:

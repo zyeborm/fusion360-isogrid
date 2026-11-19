@@ -279,3 +279,82 @@ def fillet_loop(loop,radius,warnings=None):
         if choices[i] is not None:result.append(choices[i][2])
     if not c.close_loop(result,2e-5):raise ValueError('Fillet contour failed to close')
     return merge_curves(result)
+
+
+def _outward_parallel(seg, radius):
+    """Exact right-hand offset of a CCW boundary segment."""
+    if isinstance(seg,c.Line):
+        n=c.mul(c.normal(seg.tangent()),-radius)
+        return c.Line(c.add(seg.start,n),c.add(seg.end,n))
+    new_radius=seg.radius+(radius if seg.sweep>0 else -radius)
+    if new_radius<=1e-8:return None
+    scale=new_radius/seg.radius
+    return c.Arc(seg.center,
+                 c.add(seg.center,c.mul(c.sub(seg.start,seg.center),scale)),
+                 c.add(seg.center,c.mul(c.sub(seg.end,seg.center),scale)),
+                 seg.sweep)
+
+
+def _dilate_convex_joints(loop,radius):
+    """Outward offset with exact circular joins at convex vertices.
+
+    Accepts an eroded contour whose *joints* turn left.  Its arcs may be
+    clockwise (for example, where a pocket abuts a protected round void).
+    Each added join has precisely the specified radius.
+    """
+    offsets=[_outward_parallel(seg,radius) for seg in loop]
+    if any(seg is None for seg in offsets):return None
+    out=[]
+    for i,seg in enumerate(loop):
+        nxt=loop[(i+1)%len(loop)]
+        tangent0=seg.tangent(1);tangent1=nxt.tangent(0)
+        turn=math.atan2(c.cross(tangent0,tangent1),c.dot(tangent0,tangent1))
+        if turn < -1e-6:return None  # A concave join needs offset trimming.
+        out.append(offsets[i])
+        a=offsets[i].end;b=offsets[(i+1)%len(loop)].start
+        if turn>1e-6:
+            if not (abs(c.length(c.sub(a,seg.end))-radius)<1e-6 and
+                    abs(c.length(c.sub(b,seg.end))-radius)<1e-6):
+                return None
+            out.append(c.Arc(seg.end,a,b,turn))
+        elif not c.near(a,b,1e-6):return None
+    if not c.close_loop(out,2e-5):return None
+    return merge_curves(out)
+
+
+def _round_by_opening(loop,radius):
+    """Repair competing full-radius fillets by analytic disk opening.
+
+    Erode the original cut by the cutter radius, then dilate its surviving
+    connected regions by the same radius.  This prunes narrow tips and short
+    edges without reducing the requested radius or entering excluded material.
+    Every operation remains an exact line or circular arc.
+    """
+    eroder=PreparedCurves([CurveRegion([(list(loop),True)])],radius,0)
+    centers=eroder.clip(loop)
+    if len(centers)!=1 or c.loop_area(centers[0])<=1e-9:return None
+    opened=_dilate_convex_joints(centers[0],radius)
+    if opened is None:return None
+    # Dilating centres which are at least radius from every source edge must
+    # stay inside the original pocket. Validate the result for any numerical
+    # inaccuracies before substituting it into the final sketch.
+    if c.loop_area(opened)>c.loop_area(loop)+1e-6:return None
+    for seg in opened:
+        for t in (.1,.5,.9):
+            pt=seg.point(t)
+            if not c.loop_contains(loop,pt) and min(c.point_distance(src,pt) for src in loop)>2e-5:
+                return None
+    return opened
+
+
+def rounded_pocket(loop,radius,warnings=None):
+    """Exact full-radius finishing, including clipped sliver removal."""
+    issues=[]
+    filleted=fillet_loop(loop,radius,issues)
+    if not issues:
+        return filleted
+    repaired=_round_by_opening(loop,radius)
+    if repaired is not None:
+        return repaired
+    if warnings is not None:warnings.extend(issues)
+    return filleted
