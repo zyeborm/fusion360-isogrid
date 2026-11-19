@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.0 — Exact line/arc planar geometry
+
+- Native lines and circular arcs from Fusion face and sketch boundaries are preserved as exact 2D curves.
+- Added a pure-Python arrangement clipper using analytic line/line, line/arc and arc/arc intersections, exact circular clearances, and analytic containment tests.
+- Rounded clipped pockets use tangent circular arcs, including line-to-arc and arc-to-arc joins; Fusion output creates native sketch arcs and circles.
+- Auto Fit uses analytical sector/line area and centroid calculations for exact-curve output; polygon samples are for preview and unsupported input types.
+- Supports full-circle hole contours and offsets across collapsed inner radii.
+- Complex input curves such as ellipses and splines continue to be accepted through sampling until their analytic operations are implemented.
+
+## 0.6.8 — Native sketch arcs for pocket fillets
+
+- Pocket fillets are represented as exact circular arcs and tangent lines, and only sampled as polygons for 2D clipping, scoring and preview.
+- The generated Fusion sketch uses native SketchArc entities rather than short line segments for corner fillets.
+- Source-face boundary offsets are still polygonal for clipping, so certain tight intersections beside curved cutouts can still produce unrounded junctions.
+
 ## 0.6.7
 - Show the running add-in version in the Fusion command title.
 - Show both running and available/installed versions in update notices, including the restart-required state.

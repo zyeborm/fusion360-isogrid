@@ -6,6 +6,18 @@ This file covers implementation details for `fusion360-isogrid`. See the [README
 
 The add-in converts the selected planar face, voids and optional sketch boundaries into a 2D usable region. It builds and clips a triangular pocket lattice, then applies corner rounding. The final feature is a Fusion sketch plus a single extrusion cut at the user-entered depth.
 
+### Analytic line and arc engine (v0.7)
+
+Fusion line, arc and circle edges are converted to **directed, exact** 2D segments. The canonical primitives are in `curves2d.py`; intersection/arrangement clipping is in `exact_clipper.py`. Normal planar faces and sketch profiles can contain multiple exterior loops, internal voids, tangencies and circular cutouts.
+
+The pure-Python engine intersects line/line, line/arc and arc/arc segments analytically, splits the segments at intersection parameters, tests the two sides of each fragment against the allowed region, and assembles closed contours. Edge clearances are constructed from line/arc offsets with true circular endcaps. All common contour areas and centroids use exact Green's-theorem integrals over straight segments and circular sectors.
+
+Clipped-pocket fillets solve for a circle tangent to the neighbouring analytic curves. The final curves remain **lines and arcs**, including when a pocket meets an existing circular cutout. Fusion receives native sketch lines, arcs and full circles. Preview outlines are chord-tolerance samples derived from the final curves.
+
+An unsupported input curve (ellipse, NURBS spline, conic) is currently sampled into segments at the input boundary. This maintains input acceptance while reserving exact-curve operations for the first release's lines and circular arcs. The arrangement code uses an extensible primitive interface; additional curve families can be added without redesigning lattice generation or Auto Fit.
+
+**Geometric limitation:** Some narrow partial pockets cannot accept the full requested milling radius. Rather than enlarge pockets into protected regions or silently reduce the radius, the engine preserves feasible geometry and reports the number of infeasible corners. Those pockets can be adjusted manually or omitted. The Fusion runtime integration has yet to be tested against the supplied B-Rep file in a live design.
+
 With trimming disabled, the 2D grid extends across the selected region's bounding extent. Overlapping profiles may need manual correction before machining. In trimmed mode, small fragments and corners unable to accept the full rounding radius are reported as warnings; feasible pocket geometry is preserved.
 
 ## Auto Fit
@@ -22,7 +34,7 @@ An optional Shapely/GEOS implementation remains in `geometry_compiled.py`, along
 
 2D preview and Auto Fit calculations run in a dedicated Python thread, with custom events returning results to Fusion's main thread. CAD feature creation and viewport graphics remain on the main thread. Obsolete preview calculations are superseded by newer edits.
 
-When the user **opens the isogrid command**, a separate short-lived thread checks the version in the public GitHub `main` manifest. A newer version appears as a clickable notice in the command dialog. Results are cached for 30 minutes. Network failures are silent. No code is downloaded, replaced or executed by the updater. Version numbers must be increased in the manifest when publishing a new version.
+When the user **opens the isogrid command**, a separate short-lived thread checks the version in the public GitHub `main` manifest. Results are cached for 30 minutes and network failures are silent. If a newer version exists, **Install Update** downloads the public repository archive on demand and installs it in a staged, rollback-capable operation. The loaded add-in remains unchanged until Fusion restarts. Version numbers must be increased in the manifest when publishing a new version.
 
 ## Tests
 
@@ -36,7 +48,9 @@ The tests run outside Fusion; the UI and CAD creation still require verification
 ## Source files
 
 - `fusion360-isogrid.py`: Fusion command, preview and final feature
-- `geometry.py`: pure Python geometry engine
+- `geometry.py`: pattern generator, region compatibility and exact clipping adapter
+- `curves2d.py`: exact 2D line/arc primitives, intersections, offsets, area/centroid
+- `exact_clipper.py`: pure-Python analytic region clipping and tangent fillets
 - `geometry_compiled.py`: archived, disabled GEOS clipping implementation
 - `fitting.py`: Auto Fit optimiser
 - `async_engine.py`: preview worker and results

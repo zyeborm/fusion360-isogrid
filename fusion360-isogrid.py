@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import geometry
 import fitting
 import async_engine
+import curves2d as exact_curves
 import update_checker
 
 APP = adsk.core.Application.get()
@@ -26,7 +27,7 @@ COMMAND_ID = 'fusion360_isogrid_create'
 COMMAND_NAME = 'fusion360-isogrid'
 # Keep the version in the running Python code, not in the on-disk manifest:
 # the updater replaces that manifest while this old code remains loaded.
-RUNNING_VERSION = '0.6.7'
+RUNNING_VERSION = '0.7.0'
 COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -204,28 +205,115 @@ def _sequence(samples,frame):
     return geometry.clean(chain)
 
 
+def _analytic_curve(curve,evaluator,frame,tolerance):
+    """Read a bounded Fusion line or circle/arc without polygonising it.
+
+    Evaluator endpoints and intermediate samples also handle reversed B-Rep
+    edge parameterisation, arcs greater than 180 degrees and full circles.
+    Unsupported curve families are accepted as stroked segments for now.
+    The curve type is tested before accessing type-specific properties.
+    """
+    kind=curve.objectType
+    is_line=(kind==adsk.core.Line3D.classType())
+    is_circle=(kind in (adsk.core.Arc3D.classType(),
+                       adsk.core.Circle3D.classType()))
+    if not is_line and not is_circle:
+        points=[frame.to_xy(pt) for pt in _strokes(evaluator,tolerance)]
+        return [exact_curves.Line(a,b) for a,b in zip(points,points[1:])
+                if exact_curves.length(exact_curves.sub(a,b))>1e-8]
+    ok,p0,p1=evaluator.getEndPoints()
+    if not ok:
+        # Some periodic evaluators report parameter extents but no distinct
+        # endpoints.  Reading the end parameters also handles seam circles.
+        valid,t_start,t_end=evaluator.getParameterExtents()
+        if not valid:raise ValueError('Failed to evaluate boundary endpoints.')
+        ok,p0=evaluator.getPointAtParameter(t_start)
+        valid,p1=evaluator.getPointAtParameter(t_end)
+        if not ok or not valid:
+            raise ValueError('Failed to evaluate periodic boundary endpoints.')
+    a,b=frame.to_xy(p0),frame.to_xy(p1)
+    if is_line:
+        return [exact_curves.Line(a,b)]
+    center=frame.to_xy(curve.center)
+    ok,t0,t1=evaluator.getParameterExtents()
+    if not ok:raise ValueError('Failed to read circular boundary range.')
+    ok,pm=evaluator.getPointAtParameter((t0+t1)/2)
+    if not ok:raise ValueError('Failed to evaluate circular boundary midpoint.')
+    m=frame.to_xy(pm)
+    if exact_curves.near(a,b,1e-6):
+        ok,pq=evaluator.getPointAtParameter(t0+(t1-t0)/4)
+        if not ok:raise ValueError('Failed to determine full-circle direction.')
+        q=frame.to_xy(pq)
+        sign=1 if exact_curves.cross(exact_curves.sub(a,center),
+                                    exact_curves.sub(q,center))>0 else -1
+        return [exact_curves.Arc(center,a,a,sign*math.tau)]
+    theta0=math.atan2(a[1]-center[1],a[0]-center[0])
+    thetam=math.atan2(m[1]-center[1],m[0]-center[0])
+    theta1=math.atan2(b[1]-center[1],b[0]-center[0])
+    forward=(theta1-theta0)%math.tau
+    halfway=(thetam-theta0)%math.tau
+    sweep=forward if halfway<forward else -(math.tau-forward)
+    return [exact_curves.Arc(center,a,b,sweep)]
+
+
+def _curve_chain(pieces,outer):
+    """Orient native coedges to form one topological loop."""
+    pieces=[list(part) for part in pieces if part]
+    if not pieces:return []
+    if len(pieces)==1 and len(pieces[0])==1:
+        seg=pieces[0][0]
+        if isinstance(seg,exact_curves.Arc) and abs(seg.sweep)>math.tau-1e-7:
+            return [seg if (seg.sweep>0)==outer else seg.reverse()]
+    if len(pieces)>1:
+        first,second=pieces[:2]
+        if min(exact_curves.length(exact_curves.sub(first[0].start,second[0].start)),
+               exact_curves.length(exact_curves.sub(first[0].start,second[-1].end))) < min(
+               exact_curves.length(exact_curves.sub(first[-1].end,second[0].start)),
+               exact_curves.length(exact_curves.sub(first[-1].end,second[-1].end))):
+            pieces[0]=exact_curves.reverse_loop(first)
+    chain=pieces[0]
+    for item in pieces[1:]:
+        if exact_curves.length(exact_curves.sub(chain[-1].end,item[0].start)) > exact_curves.length(exact_curves.sub(chain[-1].end,item[-1].end)):
+            item=exact_curves.reverse_loop(item)
+        if not exact_curves.near(chain[-1].end,item[0].start,1e-4):
+            raise ValueError('Input boundary curves do not connect.')
+        chain.extend(item)
+    if not exact_curves.close_loop(chain,1e-4):
+        raise ValueError('Input curve boundary is open.')
+    if (exact_curves.loop_area(chain)>0)!=outer:
+        chain=exact_curves.reverse_loop(chain)
+    return chain
+
+
 def _face_region(face,frame,tolerance):
     loops=[]
+    curve_loops=[]
     for i in range(face.loops.count):
         loop=face.loops.item(i)
-        samples=[_strokes(loop.coEdges.item(k).edge.evaluator,tolerance)
-                 for k in range(loop.coEdges.count)]
-        poly=_sequence(samples,frame)
-        loops.append((poly,bool(loop.isOuter)))
-    return geometry.Region(loops)
+        parts=[]
+        for k in range(loop.coEdges.count):
+            edge=loop.coEdges.item(k).edge
+            parts.append(_analytic_curve(edge.geometry,edge.evaluator,frame,tolerance))
+        path=_curve_chain(parts,bool(loop.isOuter))
+        curve_loops.append(path)
+        loops.append((exact_curves.sample(path,tolerance),bool(loop.isOuter)))
+    return geometry.Region(loops,curve_loops=curve_loops)
 
 
 def _profile_region(profile,frame,tolerance):
     loops=[]
+    curve_loops=[]
     for i in range(profile.profileLoops.count):
         loop=profile.profileLoops.item(i)
-        samples=[]
+        parts=[]
         for j in range(loop.profileCurves.count):
             ent=loop.profileCurves.item(j).sketchEntity
             curve=ent.worldGeometry
-            samples.append(_strokes(curve.evaluator,tolerance))
-        loops.append((_sequence(samples,frame),bool(loop.isOuter)))
-    return geometry.Region(loops)
+            parts.append(_analytic_curve(curve,curve.evaluator,frame,tolerance))
+        path=_curve_chain(parts,bool(loop.isOuter))
+        curve_loops.append(path)
+        loops.append((exact_curves.sample(path,tolerance),bool(loop.isOuter)))
+    return geometry.Region(loops,curve_loops=curve_loops)
 
 
 def _inputs_to_settings(inputs):
@@ -524,6 +612,7 @@ def _create_feature(data):
         sketch=sketches.addWithoutEdges(face)
         sketch.name='Isogrid · pocket outlines'
         lines=sketch.sketchCurves.sketchLines
+        arcs=sketch.sketchCurves.sketchArcs
         circles=sketch.sketchCurves.sketchCircles
         sketch.isComputeDeferred=True
         for shape in outlines:
@@ -532,11 +621,24 @@ def _create_feature(data):
                 center_pt=sketch.modelToSketchSpace(frame.to_world(center))
                 circles.addByCenterRadius(center_pt,radius)
                 continue
-            for poly in shape.loops:
-                for a,b in zip(poly,poly[1:]+poly[:1]):
-                    p1=sketch.modelToSketchSpace(frame.to_world(a))
-                    p2=sketch.modelToSketchSpace(frame.to_world(b))
-                    lines.addByTwoPoints(p1,p2)
+            loops=shape.curve_loops or [geometry.polyline_curves(p) for p in shape.loops]
+            for curved_loop in loops:
+                for segment in curved_loop:
+                    p1=sketch.modelToSketchSpace(frame.to_world(segment.start))
+                    p2=sketch.modelToSketchSpace(frame.to_world(segment.end))
+                    if isinstance(segment,geometry.Arc2D):
+                        if abs(segment.sweep)>=math.tau-1e-7:
+                            centre=sketch.modelToSketchSpace(frame.to_world(segment.center))
+                            created=circles.addByCenterRadius(centre,segment.radius)
+                        else:
+                            midpoint=sketch.modelToSketchSpace(frame.to_world(segment.middle))
+                            # A midpoint disambiguates major/minor and
+                            # clockwise/counter-clockwise source arcs.
+                            created=arcs.addByThreePoints(p1,midpoint,p2)
+                        if not created:
+                            raise RuntimeError('Unable to create a native circular sketch curve.')
+                    else:
+                        lines.addByTwoPoints(p1,p2)
         sketch.isComputeDeferred=False
         # Determine which Fusion profiles correspond to pockets, not protected
         # islands or the exterior. Their sample point is in sketch coordinates.

@@ -46,21 +46,21 @@ class VersionVisibilityTests(unittest.TestCase):
         inputs = SimpleNamespace(itemById=lambda key: {
             'update_notice': notice, 'install_update': button}[key])
         session = SimpleNamespace(alive=True, inputs=inputs, _shown_update=None)
-        checker = SimpleNamespace(available=lambda: '0.6.8')
+        checker = SimpleNamespace(available=lambda: '99.0.0')
         installer = SimpleNamespace(state=lambda: ('idle', None, None))
         with patch.object(ui, '_update_checker', checker), \
              patch.object(ui, '_update_installer', installer):
             ui._show_update_notice(session)
             self.assertTrue(notice.isVisible)
             self.assertTrue(button.isVisible)
-            self.assertIn('v0.6.8', notice.formattedText)
-            self.assertIn('v0.6.7', notice.formattedText)
-            installer.state = lambda: ('installed', '0.6.8', None)
+            self.assertIn('v99.0.0', notice.formattedText)
+            self.assertIn(f'v{ui.RUNNING_VERSION}', notice.formattedText)
+            installer.state = lambda: ('installed', '99.0.0', None)
             ui._show_update_notice(session)
             self.assertTrue(notice.isVisible)
             self.assertFalse(button.isVisible)
-            self.assertIn('Installed v0.6.8', notice.formattedText)
-            self.assertIn('running v0.6.7', notice.formattedText)
+            self.assertIn('Installed v99.0.0', notice.formattedText)
+            self.assertIn(f'running v{ui.RUNNING_VERSION}', notice.formattedText)
             self.assertIn('Restart Fusion', notice.formattedText)
 
     def test_equal_remote_version_clears_old_available_notice(self):

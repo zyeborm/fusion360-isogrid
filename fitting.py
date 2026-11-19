@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import math
 import random
 import geometry
+import curves2d as curves
+import exact_clipper as exact
 
 
 @dataclass
@@ -46,7 +48,9 @@ def _metrics(shapes,pitch,rib,corner,region_box,area_limit,nominal,pmin,pmax):
     # This is the true geometry with the corner rounds already clipped/applied;
     # native circles use their exact analytic area.
     triangle=[(0,0),(pitch,0),(pitch/2,geometry.SQRT3*pitch/2)]
-    full=abs(geometry.area(geometry.rounded_triangle(triangle,rib/2,corner)))
+    full_polygon=geometry.rounded_triangle(triangle,rib/2,0)
+    full_curves=[curves.Line(a,b) for a,b in zip(full_polygon,full_polygon[1:]+full_polygon[:1])]
+    full=abs(curves.loop_area(exact.fillet_loop(full_curves,corner)))
     total=0.0; pocket_count=0; small=0; partial=0
     sumx=sumy=0.0
     for shape in shapes:
@@ -55,14 +59,26 @@ def _metrics(shapes,pitch,rib,corner,region_box,area_limit,nominal,pmin,pmax):
             value=math.pi*r*r
             xc,yc=center
         else:
-            value=sum(geometry.area(poly) for poly in shape.loops)
+            # Exact circular-sector integrals for the new curve engine;
+            # polygons remain a view-only representation for these shapes.
+            if shape.curve_loops:
+                value=sum(curves.loop_area(loop) for loop in shape.curve_loops)
+                if value>1e-10:
+                    mx=sum(curves.loop_area(loop)*curves.loop_centroid(loop)[0]
+                           for loop in shape.curve_loops)
+                    my=sum(curves.loop_area(loop)*curves.loop_centroid(loop)[1]
+                           for loop in shape.curve_loops)
+                    xc,yc=mx/value,my/value
+            else:
+                value=sum(geometry.area(poly) for poly in shape.loops)
             if value<=1e-10: continue
             pocket_count+=1
             # A cell can fragment into multiple pieces, so count each partial.
             if value<.96*full:partial+=1
             if value<.35*full:small+=1
-            xc=sum(geometry.area(poly)*_centroid(poly)[0] for poly in shape.loops)/value
-            yc=sum(geometry.area(poly)*_centroid(poly)[1] for poly in shape.loops)/value
+            if not shape.curve_loops:
+                xc=sum(geometry.area(poly)*_centroid(poly)[0] for poly in shape.loops)/value
+                yc=sum(geometry.area(poly)*_centroid(poly)[1] for poly in shape.loops)/value
         total+=value
         sumx+=value*xc;sumy+=value*yc
     if total<=1e-9: return None
@@ -140,7 +156,8 @@ def find_fits(regions, settings, base_origin=None, anchor='vertex', rotation=Non
                                            backend=s.get('backend','auto'))
     # The mask may cover less than the selected face; a conservative area cap
     # is sufficient because it is constant across candidates.
-    region_area=min(sum(geometry.area(poly) for poly,_ in reg.loops)
+    region_area=min(sum(curves.loop_area(loop) for loop in reg.curve_loops)
+                    if reg.curve_loops else sum(geometry.area(poly) for poly,_ in reg.loops)
                     for reg in regions)
     objectives=('Maximum removal','Clean edges','Best symmetry','Closest to nominal')
     population_size=12

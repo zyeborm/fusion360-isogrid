@@ -16,6 +16,8 @@ FILES = {
     'fusion360-isogrid.py': b'# entrypoint\n',
     'fusion360-isogrid.manifest': json.dumps({'id': ID, 'type': 'addin', 'version': '0.6.6'}).encode(),
     'geometry.py': b'# geometry new\n',
+    'curves2d.py': b'# exact curve primitives\n',
+    'exact_clipper.py': b'# exact curve booleans\n',
     'fitting.py': b'# fitter new\n',
     'async_engine.py': b'# worker new\n',
     'update_checker.py': b'# updater new\n',

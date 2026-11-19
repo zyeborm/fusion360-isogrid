@@ -7,6 +7,8 @@ intersection with one or more regions. This permits both face and sketch masks.
 from __future__ import annotations
 import math
 from dataclasses import dataclass
+import curves2d as _curves
+import exact_clipper as _exact
 
 # GEOS/Shapely support is deliberately disabled for now. An incompatible native
 # wheel can terminate Fusion outright during import. Keep this integration for
@@ -173,22 +175,40 @@ class _LoopYIndex:
 class Region:
     # One or several face boundary loops; each boolean represents outer boundary.
     loops: list[tuple[list[tuple[float, float]], bool]]
+    # Optional exact source geometry, one loop per polygon above.  Fusion
+    # supplies line and arc segments; the polygon is only for broad-phase
+    # bounds, sketch profile picking and legacy tests.
+    curve_loops: list | None = None
 
     def __post_init__(self):
         canonical = []
-        for poly, outer in self.loops:
+        retained_curves=[]
+        for i,(poly, outer) in enumerate(self.loops):
             poly = clean(poly)
             if len(poly) < 3 or abs(area(poly)) < EPS: continue
-            if (area(poly) > 0) != outer: poly.reverse()
+            flipped=(area(poly)>0)!=outer
+            if flipped: poly.reverse()
+            if self.curve_loops is not None:
+                curves=self.curve_loops[i]
+                if flipped:curves=_curves.reverse_loop(curves)
+                retained_curves.append(curves)
             canonical.append((poly, outer))
         if not any(o for _, o in canonical):
             raise ValueError('The region has no exterior boundary.')
         self.loops = canonical
+        if self.curve_loops is not None:self.curve_loops=retained_curves
+        self._exact_region=None
         self.boxes = [bounds(p) for p, _ in canonical]
         self._point_indices = [_LoopYIndex(p) if len(p)>=24 else None
                                for p,_ in canonical]
 
     def contains(self, p, boundary=True):
+        if self.curve_loops is not None:
+            if self._exact_region is None:
+                self._exact_region = _exact.CurveRegion([
+                    (list(path), outer) for path, (_, outer)
+                    in zip(self.curve_loops, self.loops)])
+            return self._exact_region.contains(p)
         ptbox=(p[0],p[1],p[0],p[1])
         def inside(i,edge_boundary):
             poly,_=self.loops[i]
@@ -226,6 +246,48 @@ class CutShape:
     loops: list[list[tuple[float,float]]]
     circle: tuple | None = None  # (center_xy, radius), if completely untrimmed
     fillet_warnings: int = 0  # Convex corners where the requested radius cannot fit
+    # Exact sketch geometry.  Polygons above are tessellated derivatives used
+    # for clipping, preview and candidate scoring, never to reconstruct arcs.
+    curve_loops: list | None = None
+
+
+# Shared canonical line/arc primitives.  Native sketch arcs and exact clipping
+# use these same objects; tessellated display polygons are derived from them.
+Line2D = _curves.Line
+Arc2D = _curves.Arc
+
+
+def polyline_curves(poly):
+    """An unfilleted polygon, retained as exact straight sketch segments."""
+    return [Line2D(a, b) for a, b in _segments(poly)
+            if norm(sub(a, b)) > EPS]
+
+
+def sample_curve_loop(curves, segments_per_corner=3):
+    """Sample canonical arcs *only* for polygon operations and display."""
+    points = []
+    for segment in curves:
+        if isinstance(segment, Line2D):
+            points.append(segment.start)
+            continue
+        radius=norm(sub(segment.start,segment.center))
+        steps=max(2, math.ceil(segments_per_corner*abs(segment.sweep)/(math.pi/3)))
+        alpha=math.atan2(segment.start[1]-segment.center[1],
+                         segment.start[0]-segment.center[0])
+        for i in range(steps):
+            angle=alpha+segment.sweep*i/steps
+            points.append((segment.center[0]+radius*math.cos(angle),
+                           segment.center[1]+radius*math.sin(angle)))
+    return clean(points)
+
+
+def transform_curve_loop(curves, cos_angle, sin_angle, translation):
+    def moved(p):
+        return (translation[0]+cos_angle*p[0]-sin_angle*p[1],
+                translation[1]+sin_angle*p[0]+cos_angle*p[1])
+    return ([Line2D(moved(s.start), moved(s.end)) if isinstance(s, Line2D)
+             else Arc2D(moved(s.center), moved(s.start), moved(s.end),s.sweep)
+             for s in curves])
 
 
 def offset_valid_side(poly, distance):
@@ -550,9 +612,8 @@ def rounded_triangle(vertices, inset, corner_radius, segments_per_corner=5):
     return clean(pts)
 
 
-def round_clipped_contour(poly, radius, segments_per_corner=3,
-                          threshold_degrees=5, warnings=None):
-    """Fillet convex corners of a *finished* clipped pocket contour.
+def fillet_curve_loop(poly, radius, threshold_degrees=5, warnings=None):
+    """Build an exact line/arc loop from a clipped pocket contour.
 
     Clipping can introduce new acute corners at the perimeter, or where a
     protected void meets a triangle. A fillet applied only to the original
@@ -570,7 +631,7 @@ def round_clipped_contour(poly, radius, segments_per_corner=3,
     """
     poly=clean(poly)
     if radius<=EPS or len(poly)<3 or area(poly)<=0:
-        return poly
+        return polyline_curves(poly)
     n=len(poly)
     threshold=math.radians(threshold_degrees)
     tangent=[0.0]*n
@@ -608,31 +669,49 @@ def round_clipped_contour(poly, radius, segments_per_corner=3,
         tangent[victim]=0.0
         if warnings is not None:
             warnings.append(victim)
-    out=[]
+    incoming=[]
+    outgoing=[]
+    fillets=[]
     for i,p in enumerate(poly):
         t=tangent[i]
         if t<=EPS:
-            out.append(p);continue
+            incoming.append(p)
+            outgoing.append(p)
+            fillets.append(None)
+            continue
         prev,nxt=poly[i-1],poly[(i+1)%n]
         u=mul(sub(prev,p),1/norm(sub(prev,p)))
         v=mul(sub(nxt,p),1/norm(sub(nxt,p)))
         alpha=angles[i]
-        actual_radius=radius
         bisector=add(u,v)
         bisector=mul(bisector,1/norm(bisector))
-        center=add(p,mul(bisector,actual_radius/math.sin(alpha/2)))
+        center=add(p,mul(bisector,radius/math.sin(alpha/2)))
         a=add(p,mul(u,t));b=add(p,mul(v,t))
         va=sub(a,center);vb=sub(b,center)
         sweep=math.atan2(cross(va,vb),dot(va,vb))
         if sweep<0:sweep+=math.tau
-        # Adaptive steps retain the requested radius without over-segmenting
-        # shallow intersections against finely tessellated perimeter arcs.
-        steps=max(2,math.ceil(segments_per_corner*sweep/(math.pi/3)))
-        for step in range(steps+1):
-            angle=sweep*step/steps
-            out.append(add(center,(va[0]*math.cos(angle)-va[1]*math.sin(angle),
-                                   va[0]*math.sin(angle)+va[1]*math.cos(angle))))
-    return clean(out)
+        incoming.append(a)
+        outgoing.append(b)
+        fillets.append(Arc2D(center, a, b, sweep))
+    result=[]
+    for i in range(n):
+        # Walk in the original CCW contour direction. Each straight segment
+        # joins the previous fillet's exit to this fillet's entry.
+        a=outgoing[i-1]
+        b=incoming[i]
+        if norm(sub(a,b))>1e-8:
+            result.append(Line2D(a,b))
+        if fillets[i] is not None:
+            result.append(fillets[i])
+    return result
+
+
+def round_clipped_contour(poly, radius, segments_per_corner=3,
+                          threshold_degrees=5, warnings=None):
+    """Polygonal derivative of the canonical circular fillet geometry."""
+    return sample_curve_loop(
+        fillet_curve_loop(poly, radius, threshold_degrees, warnings),
+        segments_per_corner)
 
 
 def face_bounds(regions):
@@ -896,6 +975,20 @@ class PreparedGeometry:
         self.regions=regions
         self.perimeter=perimeter
         self.void_clearance=void_clearance
+        # Production face/profile boundaries carry native curves.  Run the
+        # exact analytic intersection path; synthetic polygon-only fixtures
+        # retain the previous engine until their migration is complete.
+        self.exact = None
+        if backend != 'geos' and all(region.curve_loops is not None
+                                     for region in regions):
+            self.exact = _exact.PreparedCurves([
+                _exact.CurveRegion([(list(path),outer)
+                                    for path,(_,outer) in zip(region.curve_loops,region.loops)])
+                for region in regions],perimeter,void_clearance)
+            self.backend='exact'
+            self.compiled=None
+            self.exclusions=[]
+            return
         self.backend = ('geos' if backend=='geos' or
                         (backend=='auto' and _CompiledArea is not None)
                         else 'python')
@@ -939,6 +1032,7 @@ class PreparedGeometry:
             self._mask_boundary_index=None
 
     def clip(self, pocket):
+        if self.exact is not None:return self.exact.clip(pocket)
         if self.compiled is not None:
             return self.compiled.clip(pocket)
         local_edges=self._mask_boundary_index.query(bounds(pocket))
@@ -953,11 +1047,13 @@ class PreparedGeometry:
                                      local_edges,([],[]))
 
     def clip_many(self, pockets):
+        if self.exact is not None:return self.exact.clip_many(pockets)
         if self.compiled is not None:
             return self.compiled.clip_many(pockets)
         return [self.clip(pocket) for pocket in pockets]
 
     def circle_fits(self, center, radius):
+        if self.exact is not None:return self.exact.circle_fits(center,radius)
         if self.compiled is not None:
             return self.compiled.circle_fits(center, radius)
         if not all(reg.contains(center,False) for reg in self.regions):
@@ -1002,9 +1098,11 @@ def make_pockets(regions,pitch,rib,perimeter,void_clearance,offset_x,offset_y,
     side=pitch-SQRT3*rib
     reference=[(0.0,0.0),(side,0.0),(side/2,SQRT3*side/2)]
     template_warnings=[]
-    full_template=(round_clipped_contour(reference,corner_radius,
-                                         warnings=template_warnings)
-                   if corner_radius>EPS else reference)
+    # Exact arcs are the source of truth. Their polygonal samples serve the
+    # intersection/scoring algorithm and the custom-graphics preview only.
+    template_curves=fillet_curve_loop(reference,corner_radius,
+                                     warnings=template_warnings)
+    full_template=sample_curve_loop(template_curves)
     pockets=list(lattice_pockets(box,pitch,rib,origin,rotation,0,max_cells))
     if len(pockets)>max_cells:
         raise ValueError(f'Pattern exceeds {max_cells} cells; increase pitch.')
@@ -1012,6 +1110,35 @@ def make_pockets(regions,pitch,rib,perimeter,void_clearance,offset_x,offset_y,
                [[p] for p in pockets])
     for pocket,clipped in zip(pockets,clippings):
         if not clipped:continue
+        if trim_boundary and prepared.exact is not None:
+            # Curves are the source of truth.  Clipping and corner fillets use
+            # analytic line/arc intersections; sampled polygons exist only for
+            # preview, scoring, and Fusion's profile-selection convenience.
+            outers=[];curve_loops=[];pending_holes=[];fillet_warnings=0
+            for raw_loop in clipped:
+                signed=_curves.loop_area(raw_loop)
+                if signed<0:
+                    pending_holes.append(raw_loop)
+                    continue
+                if signed<=min_area:continue
+                issues=[]
+                curves=_exact.fillet_loop(raw_loop,corner_radius,issues)
+                fillet_warnings+=len(issues)
+                poly=_curves.sample(curves,chord_tolerance=.0004)
+                if len(poly)>=3 and _curves.loop_area(curves)>min_area:
+                    outers.append(poly)
+                    curve_loops.append(curves)
+            if outers:
+                for hole in pending_holes:
+                    # A negative loop fully enclosed by a retained positive
+                    # contour represents a protected island in the pocket.
+                    if any(_curves.loop_contains(outer,hole[0].start)
+                           for outer in curve_loops):
+                        curve_loops.append(hole)
+                        outers.append(_curves.sample(hole,chord_tolerance=.0004))
+                results.append(CutShape(pocket,outers,fillet_warnings=fillet_warnings,
+                                        curve_loops=curve_loops))
+            continue
         if len(clipped)==1 and clipped[0] is pocket:
             if full_template:
                 u=sub(pocket[1],pocket[0])
@@ -1020,24 +1147,32 @@ def make_pockets(regions,pitch,rib,perimeter,void_clearance,offset_x,offset_y,
                 contour=[(x0+ct*x-st*y,y0+st*x+ct*y)
                          for x,y in full_template]
                 if area(contour)>min_area:
+                    curves=transform_curve_loop(template_curves,ct,st,(x0,y0))
                     results.append(CutShape(pocket,[contour],
-                                            fillet_warnings=len(template_warnings)))
+                                            fillet_warnings=len(template_warnings),
+                                            curve_loops=[curves]))
             continue
         # Keep holes associated with large valid pocket islands; remove tiny
         # outer slivers, then only include void loops that lie inside kept islands.
         rounded=[]
+        curve_loops=[]
         fillet_warnings=0
         for p in clipped:
             if area(p)<=min_area:continue
             local_warnings=[]
-            contour=round_clipped_contour(p,corner_radius,warnings=local_warnings)
+            curves=fillet_curve_loop(p,corner_radius,warnings=local_warnings)
+            contour=sample_curve_loop(curves)
             fillet_warnings+=len(local_warnings)
             if len(contour)>=3 and area(contour)>min_area:
                 rounded.append(contour)
+                curve_loops.append(curves)
         outers=rounded
         holes=[p for p in clipped if area(p)<0 and any(in_poly(p[0],o,False) for o in outers)]
-        if outers: results.append(CutShape(pocket,outers+holes,
-                                           fillet_warnings=fillet_warnings))
+        if outers:
+            curve_loops.extend(polyline_curves(p) for p in holes)
+            results.append(CutShape(pocket,outers+holes,
+                                    fillet_warnings=fillet_warnings,
+                                    curve_loops=curve_loops))
     if vertex_hole_diameter>EPS:
         r=vertex_hole_diameter/2
         for center in lattice_vertices(box,pitch,origin,rotation):

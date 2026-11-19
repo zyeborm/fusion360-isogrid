@@ -190,7 +190,7 @@ def install_archive(addin_directory, expected_version, archive_bytes):
 
     required = ('fusion360-isogrid.py', 'fusion360-isogrid.manifest',
                 'geometry.py', 'fitting.py', 'async_engine.py',
-                'update_checker.py')
+                'update_checker.py', 'curves2d.py', 'exact_clipper.py')
     if not all(name in source for name in required):
         raise ValueError('Update archive is missing required add-in files')
     try:
