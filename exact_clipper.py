@@ -37,8 +37,24 @@ class CurveRegion:
 
 @dataclass
 class _Edge:
-    segment: c.Line|c.Arc
+    segment: object
     bbox: tuple
+    local_boxes: tuple = ()
+
+
+def _local_boxes(seg):
+    """Cheap spatial rejection of distant spline/ellipse clipping candidates.
+
+    The exact segment is retained for all Boolean intersections and output.
+    Adaptive chord boxes serve only as a spatial index and include padding.
+    """
+    if not isinstance(seg,(c.Nurbs,c.Offset,c.Ellipse)):
+        return ()
+    nodes=c._flatten(seg,2e-4,13)
+    padding=4e-4
+    return tuple((min(a[0],b[0])-padding,min(a[1],b[1])-padding,
+                  max(a[0],b[0])+padding,max(a[1],b[1])+padding)
+                 for (_,a),(_,b) in zip(nodes,nodes[1:]))
 
 
 def _signature(seg,tol=1e-6):
@@ -156,7 +172,7 @@ class PreparedCurves:
                     else:
                         pieces=c.capsule(seg,margin) if margin>1e-9 else [seg]
                     for piece in pieces:
-                        self.edges.append(_Edge(piece,c.bounds(piece)))
+                        self.edges.append(_Edge(piece,c.bounds(piece),_local_boxes(piece)))
 
     def inside(self,p):
         for region in self.regions:
@@ -179,7 +195,10 @@ class PreparedCurves:
             pocket=[c.Line(a,b) for a,b in zip(pocket,pocket[1:]+pocket[:1])]
         pb=(min(c.bounds(s)[0] for s in pocket),min(c.bounds(s)[1] for s in pocket),
             max(c.bounds(s)[2] for s in pocket),max(c.bounds(s)[3] for s in pocket))
-        nearby=[e.segment for e in self.edges if c.overlaps(pb,e.bbox,1e-7)]
+        nearby=[e.segment for e in self.edges
+                if c.overlaps(pb,e.bbox,1e-7) and
+                (not e.local_boxes or any(c.overlaps(pb,box,1e-7)
+                                          for box in e.local_boxes))]
         if not nearby:
             return [pocket] if self.inside(pocket[0].point(.5)) else []
         polygon=pocket
