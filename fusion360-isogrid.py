@@ -1542,8 +1542,12 @@ class ChangedHandler(adsk.core.InputChangedEventHandler):
                                    'fit_effort','fit_rotation'):
                     self.session.request_preview(inputs)
         except Exception as error:
-            inputs.itemById('status').text='Auto Fit: '+str(error)
-            APP.log('Isogrid Auto Fit failure:\n'+traceback.format_exc())
+            if changed.startswith('preset_'):
+                _preset_input(inputs,'preset_status').text='Preset: '+str(error)
+                APP.log('Isogrid preset failure:\n'+traceback.format_exc())
+            else:
+                inputs.itemById('status').text='Auto Fit: '+str(error)
+                APP.log('Isogrid Auto Fit failure:\n'+traceback.format_exc())
 
 
 class ValidateHandler(adsk.core.ValidateInputsEventHandler):
@@ -1613,6 +1617,8 @@ def run(context):
         importlib.reload(exact_curves)
         importlib.reload(exact_clipper)
         importlib.reload(geometry)
+        importlib.reload(manufacturability)
+        importlib.reload(presets)
         importlib.reload(fast_fit)
         importlib.reload(fitting)
         importlib.reload(async_engine)
