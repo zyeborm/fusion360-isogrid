@@ -176,4 +176,3 @@ class PresetCommandTests(unittest.TestCase):
             self.assertEqual(inputs.itemById('tool_diameter').value,'6 mm')
             self.assertEqual(inputs.itemById('rib').value,'2 mm')
             self.assertEqual(calls,['fits','preview'])
-
