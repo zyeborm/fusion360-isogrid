@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.6 — General planar curve support
+
+- Extended the input adapter to preserve Fusion ellipses, elliptical arcs,
+  NURBS/controlled splines, conics exposed as NURBS, and polylines.
+- Added numerical intersections and clearance offsets for parametric curves,
+  while retaining the existing analytic line/circle path.
+- Generated native ellipses and rational NURBS sketch entities for general
+  curves; general offsets are emitted as tangent-matched cubic splines.
+- Added mixed-curve clipping and native-sketch API-mock regression tests.
+
+
 ## 0.7.5 — Multi-start integer-like geometric fitting
 
 - Retained differential evolution, but repurposed three of four passes to find clean fits across different parts of the allowed pitch range; kept maximum removal as a distinct objective.

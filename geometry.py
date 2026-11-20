@@ -187,7 +187,7 @@ class Region:
     # One or several face boundary loops; each boolean represents outer boundary.
     loops: list[tuple[list[tuple[float, float]], bool]]
     # Optional exact source geometry, one loop per polygon above.  Fusion
-    # supplies line and arc segments; the polygon is only for broad-phase
+    # supplies parametric curves; the polygon is only for broad-phase
     # bounds, sketch profile picking and legacy tests.
     curve_loops: list | None = None
 

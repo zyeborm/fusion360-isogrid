@@ -6,7 +6,7 @@ This file covers implementation details for `fusion360-isogrid`. See the [README
 
 The add-in converts the selected planar face, voids and optional sketch boundaries into a 2D usable region. It builds and clips a triangular pocket lattice, then applies corner rounding. The final feature is a Fusion sketch plus a single extrusion cut at the user-entered depth.
 
-### Analytic line and arc engine (v0.7)
+### Analytic and parametric curve engine (v0.7)
 
 Fusion line, arc and circle edges are converted to **directed, exact** 2D segments. The canonical primitives are in `curves2d.py`; intersection/arrangement clipping is in `exact_clipper.py`. Normal planar faces and sketch profiles can contain multiple exterior loops, internal voids, tangencies and circular cutouts.
 
@@ -14,7 +14,32 @@ The pure-Python engine intersects line/line, line/arc and arc/arc segments analy
 
 Clipped-pocket fillets solve for a circle tangent to the neighbouring analytic curves. Where full-radius fillets compete for a short edge, a second pass performs an analytic disk opening: erode the pocket by the requested radius, then dilate the surviving centre region by the same radius. This removes narrow tips while preserving a *full-radius* fillet and avoiding intrusion into protected material. The final curves remain **lines and arcs**, including when a pocket meets an existing circular cutout. Fusion receives native sketch lines, arcs and full circles. Preview outlines are chord-tolerance samples derived from the final curves.
 
-An unsupported input curve (ellipse, NURBS spline, conic) is currently sampled into segments at the input boundary. This maintains input acceptance while reserving exact-curve operations for the first release's lines and circular arcs. The arrangement code uses an extensible primitive interface; additional curve families can be added without redesigning lattice generation or Auto Fit.
+**Extended source curves (v0.7.6):** Planar line, circle, circular arc,
+ellipse, elliptical arc, NURBS, sketch conic, and polyline definitions are
+extracted on the Fusion main thread into plain Python data, retaining source
+control points, rational weights, knot vectors, trim parameters, and direction.
+Conics provided as Fusion NURBS use the same rational representation. The
+existing exact line/circle clipping path remains analytic. Ellipse and spline
+intersections use adaptive numerical root isolation and refinement against the
+original parametric curves; these are **numerical geometry operations**, not
+mathematically exact Boolean calculations. A compatibility sampling path
+remains for future or undocumented Fusion curve types.
+
+Source ellipses are exported as native Fusion sketch ellipses when complete;
+trimmed elliptical arcs are exported as **exact rational quadratic NURBS**.
+Clipped NURBS are trimmed with homogeneous knot insertion, preserving the
+original rational curve. The exact mathematical offset of a general ellipse
+or spline is usually neither an ellipse nor a NURBS: such offsets remain
+parametric during clipping and are approximated at final sketch creation by
+tangent-matched cubic splines, targeting 0.0001 cm (1 µm) fitting error.
+The polygonal preview remains a separate rendering derivative.
+
+**Limitations:** Highly degenerate and near-tangent intersections, periodic
+NURBS with unusual knot conventions, and offsets beyond a curve's local
+radius of curvature can still present numerical/topology difficulties.
+General spline-based Auto Fit evaluations take longer than line/arc geometry.
+Fusion native sketch output is tested with API mocks and still requires
+in-Fusion validation on representative user geometries.
 
 **Geometric limitation:** Some partial pockets are too small to contain even one circle of the requested milling radius. These cannot be repaired by disk opening. The engine retains them with sharp-corner advisories for manual review rather than changing the selected radius or silently removing the pocket. The Fusion runtime integration has yet to be tested against the supplied B-Rep file in a live design.
 
@@ -61,8 +86,9 @@ The tests run outside Fusion; the UI and CAD creation still require verification
 
 - `fusion360-isogrid.py`: Fusion command, preview and final feature
 - `geometry.py`: pattern generator, region compatibility and exact clipping adapter
-- `curves2d.py`: exact 2D line/arc primitives, intersections, offsets, area/centroid
-- `exact_clipper.py`: pure-Python analytic region clipping and tangent fillets
+- `curves2d.py`: 2D lines, arcs, ellipses, rational NURBS, general offsets,
+  analytic/numerical intersections, area and centroid
+- `exact_clipper.py`: pure-Python parametric region clipping and tangent fillets
 - `geometry_compiled.py`: archived, disabled GEOS clipping implementation
 - `fitting.py`: Auto Fit optimiser
 - `async_engine.py`: preview worker and results

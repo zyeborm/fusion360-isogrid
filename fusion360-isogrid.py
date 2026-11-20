@@ -27,7 +27,7 @@ COMMAND_ID = 'fusion360_isogrid_create'
 COMMAND_NAME = 'fusion360-isogrid'
 # Keep the version in the running Python code, not in the on-disk manifest:
 # the updater replaces that manifest while this old code remains loaded.
-RUNNING_VERSION = '0.7.5'
+RUNNING_VERSION = '0.7.6'
 COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -240,37 +240,80 @@ def _sequence(samples,frame):
 
 
 def _analytic_curve(curve,evaluator,frame,tolerance):
-    """Read a bounded Fusion line or circle/arc without polygonising it.
+    """Extract bounded Fusion curves without converting smooth edges into lines.
 
-    Evaluator endpoints and intermediate samples also handle reversed B-Rep
-    edge parameterisation, arcs greater than 180 degrees and full circles.
-    Unsupported curve families are accepted as stroked segments for now.
-    The curve type is tested before accessing type-specific properties.
+    Everything returned is plain Python, including NURBS control points and
+    trims. This is essential for the background calculation thread.
     """
     kind=curve.objectType
-    is_line=(kind==adsk.core.Line3D.classType())
-    is_circle=(kind in (adsk.core.Arc3D.classType(),
-                       adsk.core.Circle3D.classType()))
-    if not is_line and not is_circle:
+    def matches(name):
+        cls=getattr(adsk.core,name,None)
+        return cls is not None and kind==cls.classType()
+    is_line=matches('Line3D')
+    is_circle=matches('Arc3D') or matches('Circle3D')
+    is_ellipse=matches('Ellipse3D') or matches('EllipticalArc3D')
+    is_nurbs=matches('NurbsCurve3D')
+    if matches('Polyline3D'):
+        points=[frame.to_xy(pt) for pt in curve.points]
+        return [exact_curves.Line(a,b) for a,b in zip(points,points[1:])
+                if exact_curves.length(exact_curves.sub(a,b))>1e-9]
+    if not (is_line or is_circle or is_ellipse or is_nurbs):
+        # Fusion sketch conics are exposed as NURBS through worldGeometry;
+        # any other bounded Curve3D is converted to NURBS if supported.
+        converted=getattr(curve,'asNurbsCurve',None)
+        if converted is not None and converted is not curve:
+            return _analytic_curve(converted,evaluator,frame,tolerance)
+        # Unknown future Fusion curve type: conservative compatibility path.
         points=[frame.to_xy(pt) for pt in _strokes(evaluator,tolerance)]
         return [exact_curves.Line(a,b) for a,b in zip(points,points[1:])
-                if exact_curves.length(exact_curves.sub(a,b))>1e-8]
-    ok,p0,p1=evaluator.getEndPoints()
-    if not ok:
-        # Some periodic evaluators report parameter extents but no distinct
-        # endpoints.  Reading the end parameters also handles seam circles.
-        valid,t_start,t_end=evaluator.getParameterExtents()
-        if not valid:raise ValueError('Failed to evaluate boundary endpoints.')
-        ok,p0=evaluator.getPointAtParameter(t_start)
-        valid,p1=evaluator.getPointAtParameter(t_end)
-        if not ok or not valid:
-            raise ValueError('Failed to evaluate periodic boundary endpoints.')
-    a,b=frame.to_xy(p0),frame.to_xy(p1)
-    if is_line:
-        return [exact_curves.Line(a,b)]
-    center=frame.to_xy(curve.center)
+                if exact_curves.length(exact_curves.sub(a,b))>1e-9]
     ok,t0,t1=evaluator.getParameterExtents()
-    if not ok:raise ValueError('Failed to read circular boundary range.')
+    if not ok:raise ValueError('Failed to read curve parameter extents.')
+    ok,p0=evaluator.getPointAtParameter(t0)
+    valid,p1=evaluator.getPointAtParameter(t1)
+    if not ok or not valid:raise ValueError('Failed to evaluate boundary endpoints.')
+    a,b=frame.to_xy(p0),frame.to_xy(p1)
+    if is_line:return [exact_curves.Line(a,b)]
+    if is_nurbs:
+        success,control,degree,knots,is_rational,weights,is_periodic=curve.getData()
+        if not success:raise ValueError('Could not read Fusion NURBS definition.')
+        controls=tuple(frame.to_xy(pt) for pt in control)
+        weight_values=tuple(float(w) for w in weights) if is_rational else (1.,)*len(controls)
+        return [exact_curves.Nurbs(controls,int(degree),tuple(float(k) for k in knots),
+                                   weight_values,float(t0),float(t1),bool(is_periodic))]
+    center=frame.to_xy(curve.center)
+    if is_ellipse:
+        ma=curve.majorAxis.copy();ma.normalize();ma.scaleBy(curve.majorRadius)
+        minor=curve.normal.crossProduct(curve.majorAxis);minor.normalize()
+        minor.scaleBy(curve.minorRadius)
+        # Project the axis vectors into face coordinates, retaining their
+        # handedness even when the sketch plane normal faces the other way.
+        ma_point=curve.center.copy();ma_point.translateBy(ma)
+        mi_point=curve.center.copy();mi_point.translateBy(minor)
+        major=exact_curves.sub(frame.to_xy(ma_point),center)
+        minor_axis=exact_curves.sub(frame.to_xy(mi_point),center)
+        det=exact_curves.cross(major,minor_axis)
+        if abs(det)<1e-12:raise ValueError('Degenerate elliptical boundary')
+        def angle(p):
+            vec=exact_curves.sub(p,center)
+            return math.atan2(exact_curves.cross(major,vec)/det,
+                              exact_curves.cross(vec,minor_axis)/det)
+        theta0=angle(a);theta1=angle(b)
+        ok,pm=evaluator.getPointAtParameter((t0+t1)/2)
+        if not ok:raise ValueError('Could not determine ellipse traversal.')
+        thetam=angle(frame.to_xy(pm))
+        forward=(theta1-theta0)%math.tau
+        halfway=(thetam-theta0)%math.tau
+        if exact_curves.near(a,b,1e-6):
+            ok,pq=evaluator.getPointAtParameter(t0+.25*(t1-t0))
+            if not ok:raise ValueError('Could not determine full ellipse direction.')
+            quarter=(angle(frame.to_xy(pq))-theta0)%math.tau
+            sweep=math.tau if quarter<math.pi else -math.tau
+        else:
+            sweep=forward if halfway<forward else -(math.tau-forward)
+        return [exact_curves.Ellipse(center,major,minor_axis,theta0,sweep)]
+    # Exact circle / circular arc; the evaluator determines reversed edge
+    # directions, full circles and sweeps spanning more than 180 degrees.
     ok,pm=evaluator.getPointAtParameter((t0+t1)/2)
     if not ok:raise ValueError('Failed to evaluate circular boundary midpoint.')
     m=frame.to_xy(pm)
@@ -296,8 +339,10 @@ def _curve_chain(pieces,outer):
     if not pieces:return []
     if len(pieces)==1 and len(pieces[0])==1:
         seg=pieces[0][0]
-        if isinstance(seg,exact_curves.Arc) and abs(seg.sweep)>math.tau-1e-7:
-            return [seg if (seg.sweep>0)==outer else seg.reverse()]
+        if isinstance(seg,(exact_curves.Arc,exact_curves.Ellipse)) and abs(seg.sweep)>math.tau-1e-7:
+            return [seg if (exact_curves.loop_area([seg])>0)==outer else seg.reverse()]
+        if exact_curves.near(seg.start,seg.end) and exact_curves.close_loop([seg]):
+            return [seg if (exact_curves.loop_area([seg])>0)==outer else seg.reverse()]
     if len(pieces)>1:
         first,second=pieces[:2]
         if min(exact_curves.length(exact_curves.sub(first[0].start,second[0].start)),
@@ -637,6 +682,75 @@ def _draw_preview(session,data):
     APP.activeViewport.refresh()
 
 
+def _write_sketch_segment(sketch,frame,segment):
+    """Convert one directed planar curve to native Fusion sketch geometry.
+
+    Input geometry is deliberately detached from Fusion for background work;
+    only this main-thread function creates Fusion API curve objects. Native
+    conics/NURBS are preserved. General offsets become bounded-error cubic
+    splines because their exact offsets are usually not rational B-splines.
+    """
+    curves=sketch.sketchCurves
+    def sketch_point(point):
+        return sketch.modelToSketchSpace(frame.to_world(point))
+
+    if isinstance(segment,geometry.Arc2D):
+        if abs(segment.sweep)>=math.tau-1e-7:
+            created=curves.sketchCircles.addByCenterRadius(
+                sketch_point(segment.center),segment.radius)
+        else:
+            created=curves.sketchArcs.addByThreePoints(
+                sketch_point(segment.start),sketch_point(segment.middle),
+                sketch_point(segment.end))
+        if not created:
+            raise RuntimeError('Unable to create a native circular sketch curve.')
+        return
+
+    if isinstance(segment,exact_curves.Ellipse):
+        if abs(segment.sweep)>=math.tau-1e-7:
+            created=curves.sketchEllipses.add(
+                sketch_point(segment.center),
+                sketch_point(exact_curves.add(segment.center,segment.major)),
+                sketch_point(exact_curves.add(segment.center,segment.minor)))
+            if not created:
+                raise RuntimeError('Unable to create a native ellipse.')
+        else:
+            for points,weights in exact_curves.ellipse_quadratics(segment):
+                nurbs=adsk.core.NurbsCurve3D.createRational(
+                    [frame.to_world(pt) for pt in points],2,
+                    [0.,0.,0.,1.,1.,1.],list(weights),False)
+                if not nurbs or not curves.sketchFixedSplines.addByNurbsCurve(nurbs):
+                    raise RuntimeError('Unable to create a rational conic spline.')
+        return
+
+    if isinstance(segment,exact_curves.Nurbs):
+        exact=exact_curves.trimmed_nurbs(segment)
+        nurbs=adsk.core.NurbsCurve3D.createRational(
+            [frame.to_world(pt) for pt in exact.controls],exact.degree,
+            list(exact.knots),list(exact.weights),False)
+        if not nurbs or not curves.sketchFixedSplines.addByNurbsCurve(nurbs):
+            raise RuntimeError('Unable to create a native NURBS sketch curve.')
+        return
+
+    if isinstance(segment,exact_curves.Offset):
+        # A general curve offset is not, in general, an exact rational B-spline.
+        # Approximate only this final sketch representation, with end tangency.
+        for points in exact_curves.approximate_cubic_beziers(segment,1e-4):
+            nurbs=adsk.core.NurbsCurve3D.createNonRational(
+                [frame.to_world(pt) for pt in points],3,
+                [0.,0.,0.,0.,1.,1.,1.,1.],False)
+            if not nurbs or not curves.sketchFixedSplines.addByNurbsCurve(nurbs):
+                raise RuntimeError('Unable to create a smooth offset spline.')
+        return
+
+    if isinstance(segment,exact_curves.Line):
+        if not curves.sketchLines.addByTwoPoints(
+                sketch_point(segment.start),sketch_point(segment.end)):
+            raise RuntimeError('Unable to create a native sketch line.')
+        return
+    raise TypeError('Unsupported output curve: '+type(segment).__name__)
+
+
 def _create_feature(data):
     face,profile,frame,settings,regions,outlines=data
     component=face.body.parentComponent
@@ -650,8 +764,6 @@ def _create_feature(data):
         # as sketch geometry, which would generate unrelated profiles.
         sketch=sketches.addWithoutEdges(face)
         sketch.name='Isogrid · pocket outlines'
-        lines=sketch.sketchCurves.sketchLines
-        arcs=sketch.sketchCurves.sketchArcs
         circles=sketch.sketchCurves.sketchCircles
         sketch.isComputeDeferred=True
         for shape in outlines:
@@ -663,21 +775,7 @@ def _create_feature(data):
             loops=shape.curve_loops or [geometry.polyline_curves(p) for p in shape.loops]
             for curved_loop in loops:
                 for segment in curved_loop:
-                    p1=sketch.modelToSketchSpace(frame.to_world(segment.start))
-                    p2=sketch.modelToSketchSpace(frame.to_world(segment.end))
-                    if isinstance(segment,geometry.Arc2D):
-                        if abs(segment.sweep)>=math.tau-1e-7:
-                            centre=sketch.modelToSketchSpace(frame.to_world(segment.center))
-                            created=circles.addByCenterRadius(centre,segment.radius)
-                        else:
-                            midpoint=sketch.modelToSketchSpace(frame.to_world(segment.middle))
-                            # A midpoint disambiguates major/minor and
-                            # clockwise/counter-clockwise source arcs.
-                            created=arcs.addByThreePoints(p1,midpoint,p2)
-                        if not created:
-                            raise RuntimeError('Unable to create a native circular sketch curve.')
-                    else:
-                        lines.addByTwoPoints(p1,p2)
+                    _write_sketch_segment(sketch,frame,segment)
         sketch.isComputeDeferred=False
         # Determine which Fusion profiles correspond to pockets, not protected
         # islands or the exterior. Their sample point is in sketch coordinates.

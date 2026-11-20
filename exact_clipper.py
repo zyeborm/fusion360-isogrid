@@ -1,7 +1,7 @@
-"""Pure Python 2D isogrid clipping against native line and circular-arc loops.
+"""Pure Python 2D isogrid clipping against native parametric curve loops.
 
 The Boolean is evaluated by a split-edge arrangement. Each source edge retains
-its analytic shape; the boundary of the intersection is selected using a pair
+its parametric shape; the boundary of the intersection is selected using a pair
 of strict inside/outside tests at segment midpoints. Boundary margins are a
 union of exact line/arc tubular neighbourhoods, rather than tessellated boxes.
 
@@ -43,8 +43,10 @@ class _Edge:
 
 def _signature(seg,tol=1e-6):
     def pt(p):return (round(p[0]/tol),round(p[1]/tol))
-    return (('L',pt(seg.start),pt(seg.end)) if isinstance(seg,c.Line) else
-            ('A',pt(seg.start),pt(seg.end),pt(seg.center),round(seg.sweep,6)))
+    if isinstance(seg,c.Line):return ('L',pt(seg.start),pt(seg.end))
+    if isinstance(seg,c.Arc):return ('A',pt(seg.start),pt(seg.end),pt(seg.center),round(seg.sweep,6))
+    return (type(seg).__name__,pt(seg.start),pt(seg.point(.25)),
+            pt(seg.point(.5)),pt(seg.point(.75)),pt(seg.end))
 
 
 def _key(p,tol=1e-6):return (round(p[0]/tol),round(p[1]/tol))
@@ -69,9 +71,10 @@ def _split_edges(edges):
         for a,b in zip(uniq,uniq[1:]):
             # An unsplit full circle starts and ends at the same point, yet
             # contributes an entire closed boundary to the result.
-            if b-a>1e-8 and (isinstance(seg,c.Arc) and
+            if b-a>1e-8 and (isinstance(seg,(c.Arc,c.Ellipse)) and
                              abs(seg.sweep*(b-a))>1e-7 or
-                             c.length(c.sub(seg.point(a),seg.point(b)))>1e-8):
+                             c.length(c.sub(seg.point(a),seg.point(b)))>1e-8 or
+                             not isinstance(seg,(c.Line,c.Arc,c.Ellipse))):
                 yield seg.section(a,b)
 
 
@@ -142,20 +145,34 @@ class PreparedCurves:
                 margin=perimeter if is_outer else void_clearance
                 for seg in loop:
                     self.source.append((seg,margin))
-                    for piece in (c.capsule(seg,margin) if margin>1e-9 else [seg]):
+                    if margin>1e-9 and isinstance(seg,(c.Ellipse,c.Nurbs)) and \
+                            c.near(seg.start,seg.end,1e-8) and c.dot(seg.tangent(0),seg.tangent(1))>.999:
+                        # An oriented full outer loop is CCW and a hole CW.
+                        # Both exclude a strip on their right and keep the
+                        # parallel on their left. The opposite parallel is
+                        # entirely outside the permitted area and only adds
+                        # expensive false intersection candidates.
+                        pieces=[c.Offset(seg,margin)]
+                    else:
+                        pieces=c.capsule(seg,margin) if margin>1e-9 else [seg]
+                    for piece in pieces:
                         self.edges.append(_Edge(piece,c.bounds(piece)))
 
     def inside(self,p):
         for region in self.regions:
             if not region.contains(p):return False
+        pointbox=(p[0],p[1],p[0],p[1])
         for segment,margin in self.source:
-            if margin>1e-9 and c.point_distance(segment,p)<margin-2e-9:
+            if margin>1e-9 and c.overlaps(c.bounds(segment),pointbox,margin) and c.point_distance(segment,p)<margin-2e-9:
                 return False
         return True
 
     def circle_fits(self,p,r):
         if not all(region.contains(p) for region in self.regions):return False
-        return all(c.point_distance(seg,p)>=r+margin-1e-8 for seg,margin in self.source)
+        pointbox=(p[0],p[1],p[0],p[1])
+        return all(not c.overlaps(c.bounds(seg),pointbox,r+margin) or
+                   c.point_distance(seg,p)>=r+margin-1e-8
+                   for seg,margin in self.source)
 
     def clip(self,pocket):
         if isinstance(pocket[0],tuple):
@@ -190,15 +207,18 @@ def _offset_support(seg,r):
     if isinstance(seg,c.Line):
         n=c.normal(seg.tangent())
         return c.Line(c.add(seg.start,c.mul(n,r)),c.add(seg.end,c.mul(n,r)))
+    if not isinstance(seg,c.Arc):return c.Offset(seg,r)
     offset_radius=seg.radius-(r if seg.sweep>0 else -r)
     if offset_radius<=1e-9:return None
     return (seg.center,offset_radius)
 
 
 def _support_crossings(a,b):
-    if isinstance(a,c.Line) and isinstance(b,c.Line):return c.line_line(a,b,True)
-    if isinstance(a,c.Line):return c.line_circle(a,b[0],b[1],True)
-    if isinstance(b,c.Line):return c.line_circle(b,a[0],a[1],True)
+    if isinstance(a,(c.Line,c.Offset,c.Ellipse,c.Nurbs)) or isinstance(b,(c.Line,c.Offset,c.Ellipse,c.Nurbs)):
+        if isinstance(a,tuple):a=c.circle(a[0],a[1])
+        if isinstance(b,tuple):b=c.circle(b[0],b[1])
+        if isinstance(a,c.Line) and isinstance(b,c.Line):return c.line_line(a,b,True)
+        return c.intersections(a,b)
     return c.circle_circle(a[0],a[1],b[0],b[1])
 
 
@@ -206,6 +226,9 @@ def _contact(seg,center):
     if isinstance(seg,c.Line):
         u=c.sub(seg.end,seg.start)
         t=c.dot(c.sub(center,seg.start),u)/c.dot(u,u)
+        return seg.point(t)
+    if not isinstance(seg,c.Arc):
+        t=c._closest_parameter(seg,center)
         return seg.point(t)
     v=c.sub(center,seg.center)
     if c.length(v)<c.EPS:return None
@@ -286,6 +309,7 @@ def _outward_parallel(seg, radius):
     if isinstance(seg,c.Line):
         n=c.mul(c.normal(seg.tangent()),-radius)
         return c.Line(c.add(seg.start,n),c.add(seg.end,n))
+    if not isinstance(seg,c.Arc):return c.Offset(seg,-radius)
     new_radius=seg.radius+(radius if seg.sweep>0 else -radius)
     if new_radius<=1e-8:return None
     scale=new_radius/seg.radius
