@@ -208,7 +208,10 @@ def install_archive(addin_directory, expected_version, archive_bytes):
             # types before excluding them.
             if stat.S_ISLNK(member.external_attr >> 16):
                 raise ValueError('Symbolic links are not accepted in an update')
-            if relative.parts[0] == 'studies':
+            # GitHub's source ZIP also includes repository-only development
+            # material. Ignore it after validating ZIP paths and link types,
+            # before imposing the installed add-in's two-level layout.
+            if relative.parts[0] in ('studies', '.github'):
                 continue
             if (relative.is_absolute() or len(relative.parts) > 2
                     or (len(relative.parts) == 2 and relative.parts[0] != 'tests')):
