@@ -147,9 +147,17 @@ class Nurbs:
         x,y,w=_de_boor(ctrl,self.degree,self.knots,u)
         return (x/w,y/w)
     def tangent(self,t=0.):
-        dt=min(1e-5,max(2e-7,2e-7/max(abs(self.u1-self.u0),1e-8)))
-        a=self.point(max(0.,t-dt));b=self.point(min(1.,t+dt))
-        return unit(sub(b,a))
+        # Trimming near a spline intersection can leave a very short
+        # parameter span. A fixed finite difference then rounds both
+        # evaluated points to the same coordinate, despite a valid tangent.
+        # Widen the difference within this segment before declaring a cusp.
+        for dt in (1e-5, 1e-4, 1e-3, 1e-2, .1, .5, 1.):
+            a=self.point(max(0.,t-dt))
+            b=self.point(min(1.,t+dt))
+            delta=sub(b,a)
+            if length(delta)>=EPS:
+                return unit(delta)
+        raise ValueError('Degenerate NURBS segment: no measurable tangent')
     def reverse(self):return Nurbs(self.controls,self.degree,self.knots,self.weights,self.u1,self.u0,self.periodic)
     def section(self,t0,t1):
         du=self.u1-self.u0
@@ -174,8 +182,16 @@ class Offset:
     def middle(self):return self.point(.5)
     def point(self,t):return add(self.base.point(t),mul(normal(self.base.tangent(t)),self.distance))
     def tangent(self,t=0.):
-        dt=1e-5
-        return unit(sub(self.point(min(1,t+dt)),self.point(max(0,t-dt))))
+        # The derivative of a general offset may vanish at its evolute
+        # cusp. Numerically, adjacent evaluations can also coincide near
+        # extremely short trims. Use a wider secant before falling back to
+        # the base curve's limiting direction at a stationary point.
+        for dt in (1e-5, 1e-4, 1e-3, 1e-2, .1, .5, 1.):
+            delta=sub(self.point(min(1.,t+dt)),
+                      self.point(max(0.,t-dt)))
+            if length(delta)>=EPS:
+                return unit(delta)
+        return self.base.tangent(t)
     def reverse(self):return Offset(self.base.reverse(),-self.distance)
     def section(self,t0,t1):return Offset(self.base.section(t0,t1),self.distance)
 
