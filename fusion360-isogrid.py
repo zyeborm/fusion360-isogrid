@@ -862,11 +862,13 @@ class Session:
         self.pending_kind = None
         self.revision = None
         self.last_signature = None
+        self.failed_signature = None
         self.snapshot = None
         self.worker = async_engine.LatestWorker(
             lambda: APP.fireCustomEvent(CUSTOM_EVENT_ID))
 
     def dispose(self):
+        preview_timing.log('fusion.session_dispose', busy=self.busy, revision=self.revision)
         self.alive = False
         self.worker.close()
         self.clear_preview()
@@ -929,6 +931,8 @@ class Session:
             preview_timing.log('fusion.snapshot_begin')
             signature,model,payload=self._snapshot(inputs)
             preview_timing.log('fusion.snapshot_complete', elapsed=time.perf_counter()-started)
+            if not force and signature==self.failed_signature:
+                return  # Do not automatically retry an identical failed preview.
             if not force and signature==self.last_signature:
                 if self.cache_signature==signature:
                     # A depth-only edit reuses the existing pocket geometry.
@@ -937,6 +941,7 @@ class Session:
                     if not inputs.itemById('show_preview').value:
                         self.clear_preview()
                 return
+            self.failed_signature=None
             self.last_signature=signature
             self.cache=None
             self.cache_signature=None
@@ -1065,6 +1070,9 @@ class Session:
                     self._activity('working',f'Auto Fit {message["done"]}/{message["total"]}')
                 continue
             if kind=='error':
+                if message['source']=='preview' and self.snapshot is not None:
+                    self.failed_signature=self.snapshot[0]
+                preview_timing.log('fusion.preview_failed', error=message['message'])
                 self.busy=False;self.fit_running=False
                 self.pending_kind=None
                 self.last_signature=None
@@ -1319,14 +1327,16 @@ class ExecuteHandler(adsk.core.CommandEventHandler):
     def notify(self,args):
         try:
             self.session.clear_preview()
+            preview_timing.log('fusion.execute_clicked', busy=self.session.busy)
             signature,_,_=self.session._snapshot(args.command.commandInputs)
-            if self.session.cache is not None and self.session.cache_signature==signature:
-                data=self.session.cache
-            else:
-                # Rare fast-click fallback, when OK precedes the worker result.
-                data=_compute(args.command.commandInputs,max_cells=1600,
-                              source_cache=self.session.source_cache)
+            if self.session.cache is None or self.session.cache_signature!=signature:
+                preview_timing.log('fusion.execute_rejected', reason='preview_not_ready')
+                args.executeFailedMessage='Isogrid preview is not ready; adjust settings and retry.'
+                return
+            data=self.session.cache
+            preview_timing.log('fusion.feature_create_begin')
             _create_feature(data)
+            preview_timing.log('fusion.feature_create_complete')
         except Exception as error:
             args.executeFailedMessage='Isogrid failed: '+str(error)
             APP.log('Isogrid failure:\n'+traceback.format_exc())
@@ -1335,6 +1345,7 @@ class ExecuteHandler(adsk.core.CommandEventHandler):
 class DestroyHandler(adsk.core.CommandEventHandler):
     def __init__(self,session):super().__init__();self.session=session
     def notify(self,args):
+        preview_timing.log('fusion.destroy_event')
         self.session.dispose()
         if self.session in _sessions:_sessions.remove(self.session)
 
