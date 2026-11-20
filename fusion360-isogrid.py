@@ -611,7 +611,7 @@ def _show_manufacturing_report(inputs,report):
     if messages:
         field=inputs.itemById('warnings')
         if field.text=='No geometric warnings.':field.text=''
-        field.text+=(('\\n' if field.text else '')+'⚠ '+'\\n⚠ '.join(messages))
+        field.text+=(('\n' if field.text else '')+'⚠ '+'\n⚠ '.join(messages))
 
 
 def _advisory_field_errors(s):
