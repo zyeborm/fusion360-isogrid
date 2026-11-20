@@ -20,6 +20,7 @@ import geometry
 import fitting
 import async_engine
 import curves2d as exact_curves
+import exact_clipper
 import update_checker
 import preview_timing
 
@@ -1367,6 +1368,13 @@ def run(context):
         # Fusion keeps imported helper modules in sys.modules across Add-In
         # Stop/Run cycles. Reload source after files are replaced on disk.
         # Compiled GEOS support is disabled; never reload its native module.
+        # Reload geometry primitives first: Fusion keeps sys.modules alive
+        # across Add-In Stop/Run cycles. Reloading only geometry left the old
+        # curves2d implementation installed after an update (e.g. missing
+        # Ellipse/Nurbs attributes). Keep all modules on the same generation.
+        importlib.invalidate_caches()
+        importlib.reload(exact_curves)
+        importlib.reload(exact_clipper)
         importlib.reload(geometry)
         importlib.reload(fitting)
         importlib.reload(async_engine)
