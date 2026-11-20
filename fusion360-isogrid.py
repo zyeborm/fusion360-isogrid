@@ -1407,10 +1407,81 @@ class ChangedHandler(adsk.core.InputChangedEventHandler):
     def __init__(self,session):super().__init__();self.session=session
     def notify(self,args):
         if self.session.updating:return
-        inputs=args.inputs
+        # Nested GroupCommandInput inputChanged events may supply the group's
+        # child collection, not the whole command collection.
+        inputs=getattr(self.session,'inputs',None) or args.inputs
         changed=args.input.id
         try:
-            if changed=='check_update':
+            if changed in presets.FIELDS and changed not in getattr(
+                    self.session,'preset_manual_membership',set()):
+                # A field edited since the preset editor opened is a sensible
+                # default inclusion; explicit checkbox decisions always win.
+                self.session.updating=True
+                try:
+                    try:_preset_input(inputs,'preset_include_'+changed).value=True
+                    except (KeyError,AttributeError):pass  # Legacy mock dialogs.
+                finally:self.session.updating=False
+            if changed=='preset_choice':
+                item=_preset_input(inputs,'preset_choice').selectedItem
+                name=item.name if item else ''
+                if name in self.session.presets.data:
+                    values=self.session.presets.get(name)
+                    self.session.updating=True
+                    try:
+                        for key,value in values.items():
+                            _set_preset_field(inputs,key,value)
+                        _set_preset_inclusions(inputs,values.keys())
+                        self.session.preset_manual_membership=set()
+                        _preset_input(inputs,'preset_name').value=name
+                    finally:
+                        self.session.updating=False
+                    _preset_input(inputs,'preset_status').text=(
+                        f'Applied {len(values)} values from "{name}"; other settings unchanged.')
+                    _update_placement_visibility(inputs)
+                    self.session.invalidate_fits(inputs)
+                    _refresh_field_feedback(inputs)
+                    self.session.request_preview(inputs)
+            elif changed=='preset_save':
+                field=_preset_input(inputs,'preset_save')
+                if field.value:
+                    try:
+                        name=_preset_input(inputs,'preset_name').value.strip()
+                        values=_included_preset_values(inputs)
+                        # Validate all dimensional expressions before saving.
+                        for key in values:
+                            if key in ADVISORY_INPUT_UNITS:
+                                _input_number(inputs,key)
+                        self.session.presets.put(name,values)
+                        self.session.updating=True
+                        try:_refresh_preset_choices(inputs,self.session.presets,name)
+                        finally:self.session.updating=False
+                        _preset_input(inputs,'preset_status').text=(
+                            f'Saved "{name}" with {len(values)} selected values.')
+                    finally:
+                        self.session.updating=True
+                        try:field.value=False
+                        finally:self.session.updating=False
+            elif changed=='preset_delete':
+                field=_preset_input(inputs,'preset_delete')
+                if field.value:
+                    try:
+                        item=_preset_input(inputs,'preset_choice').selectedItem
+                        name=item.name if item else ''
+                        self.session.presets.delete(name)
+                        self.session.updating=True
+                        try:_refresh_preset_choices(inputs,self.session.presets)
+                        finally:self.session.updating=False
+                        _preset_input(inputs,'preset_status').text='Deleted preset "'+name+'".'
+                    finally:
+                        self.session.updating=True
+                        try:field.value=False
+                        finally:self.session.updating=False
+            elif changed.startswith('preset_include_'):
+                self.session.preset_manual_membership.add(changed[len('preset_include_'):])
+                return
+            elif changed in ('preset_name','preset_status','preset_group','preset_fields_group'):
+                return  # Preset metadata never changes the active geometry.
+            elif changed=='check_update':
                 try:
                     if inputs.itemById('check_update').value and _update_checker:
                         _update_checker.check_now()
