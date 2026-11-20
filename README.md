@@ -8,7 +8,7 @@ A Fusion 360 add-in that applies an **isogrid pattern** to a planar face of an e
 - **Optional sketch boundary** to restrict the patterned area.
 - **Adjustable grid:** Cell pitch, rib width, extrusion depth, corner radius, vertex holes, perimeter and hole clearances. Vertex holes default to 3 mm; **Auto Max Hole** calculates the largest nominal diameter that preserves a rib-width material web around an interior junction.
 - **Placement:** X/Y offsets, rotation, origin point and edge alignment.
-- **Optional Auto Fit:** Search pitch, phase and optional rotation for clean, integer-like lattice fits across irregular boundaries. The best fit is selected first; maximum material removal remains a separate candidate. Manual controls remain available.
+- **Optional Auto Fit:** Search pitch, phase and optional rotation for clean, integer-like lattice fits across irregular boundaries. The best fit is selected first; maximum material removal remains a separate candidate. Manual controls remain available. The search scores a margin-aware raster approximation rather than repeatedly constructing exact cut geometry; the selected layout uses the full native-curve clipping engine for preview and extrusion. Fit metrics are estimates until the selected preview completes.
 - **Interactive preview** with working/ready status and advisory geometry warnings that leave OK enabled.
 - **Trim to boundary** is on by default; turn it off to generate complete triangles and circles for manual trimming.
 
