@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.0 — Optional manufacturability controls and sparse presets
+
+- Integrate cutter diameter, minimum material web, minimum usable pocket
+  diameter, assumed uniform material thickness and minimum remaining skin
+  directly into the existing pattern dialog; zero disables each constraint.
+- Use the effective minimum web for nominal ribs, outer margins and cutout
+  clearances; use the specified milling cutter radius for pocket fillets.
+- Suppress unusably small or sharp-cornered pockets when manufacturing limits
+  are specified; screen final sampled contours for minimum-web violations and
+  highlight offending shapes in red during the existing preview lifecycle.
+- Keep vertex holes independent of pocket cutter dimensions and retain the
+  same native Fusion sketch and extrusion-cut output.
+- Add named sparse parameter presets, storing only explicitly included fields
+  as editable expressions / choices in an atomic per-user JSON file. Apply
+  selected values without touching excluded parameters or source selections.
+- Add command-event, preset persistence, clearance-screening and minimum-skin
+  validation tests. Retain compatibility with v0.7.x default settings.
+
 ## 0.7.8 — Fast approximate layout search (development build)
 
 - Replace one full exact-clipping/fillet run per Auto Fit candidate with a single

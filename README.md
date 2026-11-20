@@ -10,6 +10,8 @@ A Fusion 360 add-in that applies an **isogrid pattern** to a planar face of an e
 - **Placement:** X/Y offsets, rotation, origin point and edge alignment.
 - **Optional Auto Fit:** Search pitch, phase and optional rotation for clean, integer-like lattice fits across irregular boundaries. The best fit is selected first; maximum material removal remains a separate candidate. Manual controls remain available. The search scores a margin-aware raster approximation rather than repeatedly constructing exact cut geometry; the selected layout uses the full native-curve clipping engine for preview and extrusion. Fit metrics are estimates until the selected preview completes.
 - **Interactive preview** with working/ready status and advisory geometry warnings that leave OK enabled.
+- **Optional manufacturability inputs, integrated into the main dialog:** cutter diameter, minimum material web, minimum usable pocket diameter, and an assumed uniform material thickness / minimum remaining skin. Zero disables each new constraint. Cutter diameter increases the effective corner radius. The web limit increases the effective rib width and edge clearances. Infeasible pocket islands are omitted and reported, and sampled web violations are outlined in red. Existing vertex holes remain independent drillable features.
+- **Sparse named parameter presets:** expand **Parameter presets**, tick any combination of numeric expressions, switches, grid anchor, or fit effort, and save a user-defined name. Applying a preset changes only those selected values; other active settings and the selected face remain untouched. Edited parameters are preselected for saving unless manually excluded. Presets preserve expression text and are saved per user as JSON outside the installed add-in.
 - **Trim to boundary** is on by default; turn it off to generate complete triangles and circles for manual trimming.
 
 ## Install
@@ -20,6 +22,47 @@ A Fusion 360 add-in that applies an **isogrid pattern** to a planar face of an e
 4. Add the folder using **+**, select `fusion360-isogrid` and click **Run**.
 
 The command appears in **Solid → Add-Ins → fusion360-isogrid**.
+
+### Manufacturability settings
+
+The additional dimensions are optional (default **0 mm**). They are applied
+to the existing patterning workflow; there is no separate manufacturing mode.
+
+- **Cutter diameter:** sets a floor on the *inside pocket corner radius* (half
+  the cutter diameter), and omits pockets without a usable cutter-centre
+  location or where corner repair could not retain that radius. Vertex holes
+  are left for independent drilling.
+- **Minimum material web:** establishes a lower bound for the rib width,
+  perimeter margin and clearance at existing voids. The finished sampled cut
+  contours are also checked against one another and the source boundary;
+  violations are highlighted in red with a warning count. This sampled check
+  is a manufacturing diagnostic, not a metrology certificate.
+- **Minimum usable pocket diameter:** omits cut islands too small to contain
+  an inscribed circle of the specified diameter (a conservative minimum
+  access check, not a complete toolpath-accessibility proof).
+- **Material thickness / Minimum remaining skin:** when the material thickness
+  is supplied, the requested pocket depth must leave at least the specified
+  skin. Thickness is assumed uniform; the add-in does not infer local stock
+  thickness from complex B-reps.
+
+The output remains a normal, manually editable Fusion sketch and extrusion
+cut, without any managed-editing or replacement-feature mechanism.
+
+### Named parameter presets
+
+Open **Parameter presets → Values to include when saving**, tick whichever
+values should be included, provide a name, then click **Save selected values**.
+The add-in selects fields as you edit them but preserves any explicit
+inclusion/exclusion you make in that list. Selecting a saved preset applies
+only its recorded values; the selected face, mask and source references stay
+unchanged. Use **Delete selected preset** to remove one. Saving an existing
+name replaces that named set of values.
+
+The portable UTF-8 JSON file is saved to `%APPDATA%/fusion360-isogrid/presets.json`
+on Windows, `~/Library/Application Support/fusion360-isogrid/presets.json` on
+macOS, or `$XDG_CONFIG_HOME/fusion360-isogrid/presets.json` on Linux. Its
+`version` field permits future migrations. Users can back up or transfer this
+file themselves.
 
 The command title displays the **currently running version** (for example, `fusion360-isogrid v0.7.6`). The command checks for updates automatically when opened and provides a **Check for Updates** button to manually query GitHub immediately, bypassing the 30-minute cache. Manual checks report **Up to date**, an available version, or a network error. When a newer version is available, **Install Update** installs it directly. After installation, restart Fusion and reopen the command to confirm the running version. Existing dependencies and other local files are preserved.
 

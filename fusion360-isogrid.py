@@ -24,6 +24,8 @@ import curves2d as exact_curves
 import exact_clipper
 import update_checker
 import preview_timing
+import manufacturability
+import presets
 
 APP = adsk.core.Application.get()
 UI = APP.userInterface
@@ -31,7 +33,7 @@ COMMAND_ID = 'fusion360_isogrid_create'
 COMMAND_NAME = 'fusion360-isogrid'
 # Keep the version in the running Python code, not in the on-disk manifest:
 # the updater replaces that manifest while this old code remains loaded.
-RUNNING_VERSION = '0.7.8'
+RUNNING_VERSION = '0.8.0'
 COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -112,6 +114,8 @@ ADVISORY_INPUT_UNITS = {
     'pitch': 'mm', 'rib': 'mm', 'perimeter': 'mm', 'holeclear': 'mm',
     'corner': 'mm', 'nodehole': 'mm', 'minfraction': '',
     'fit_min_pitch': 'mm', 'fit_max_pitch': 'mm',
+    'tool_diameter': 'mm', 'min_web': 'mm', 'min_pocket': 'mm',
+    'stock_thickness': 'mm', 'min_skin': 'mm',
 }
 
 
@@ -161,6 +165,68 @@ def _set_input_number(inputs, key, internal_value):
         field.value = internal_value
 
 
+def _preset_input(inputs,key):
+    """Resolve nested preset controls through their GroupCommandInput.
+
+    Fusion's CommandInputs.itemById is scoped to one parent collection;
+    nested group members are not available from the root collection.
+    """
+    try:
+        group=inputs.itemById('preset_group')
+    except KeyError:
+        group=None  # Flat test doubles have no nested GroupCommandInput.
+    if group is not None:
+        children=group.children
+        if key.startswith('preset_include_'):
+            return children.itemById('preset_fields_group').children.itemById(key)
+        return children.itemById(key)
+    return inputs.itemById(key)
+
+
+def _preset_field_value(inputs,key):
+    field=inputs.itemById(key)
+    if key in presets.EXPRESSION_FIELDS:
+        return _input_expression(inputs,key)
+    if key in presets.BOOL_FIELDS:
+        return bool(field.value)
+    return field.selectedItem.name
+
+
+def _set_preset_field(inputs,key,value):
+    field=inputs.itemById(key)
+    if key in presets.EXPRESSION_FIELDS:
+        if key in ADVISORY_INPUT_UNITS:
+            field.value=value
+        else:
+            field.expression=value
+    elif key in presets.BOOL_FIELDS:
+        field.value=value
+    else:
+        item=field.listItems.itemByName(value)
+        if item is None:
+            raise ValueError('Preset refers to unavailable option: '+str(value))
+        item.isSelected=True
+
+
+def _refresh_preset_choices(inputs,store,selected=None):
+    field=_preset_input(inputs,'preset_choice')
+    field.listItems.clear()
+    field.listItems.add('— Choose saved preset —', selected is None)
+    for name in store.names():
+        field.listItems.add(name,name==selected)
+
+
+def _set_preset_inclusions(inputs,names):
+    included=set(names)
+    for key in presets.FIELDS:
+        _preset_input(inputs,'preset_include_'+key).value=key in included
+
+
+def _included_preset_values(inputs):
+    return {key:_preset_field_value(inputs,key) for key in presets.FIELDS
+            if _preset_input(inputs,'preset_include_'+key).value}
+
+
 def _auto_vertex_hole(inputs):
     """Set a vertex-hole diameter preserving rib-width material at each pocket.
 
@@ -172,8 +238,10 @@ def _auto_vertex_hole(inputs):
     units = _units_manager()
     rib = _input_number(inputs, 'rib', units)
     radius = _input_number(inputs, 'corner', units)
-    if rib <= 0 or radius < 0:
+    if rib<=0 or radius<0:
         raise ValueError('Auto hole size requires a positive rib width and a non-negative corner radius.')
+    rib=max(rib,_input_number(inputs, 'min_web', units))
+    radius=max(radius,_input_number(inputs, 'tool_diameter', units)/2.)
     maximum = geometry.maximum_vertex_hole_diameter(rib, radius)
     _set_input_number(inputs, 'nodehole', maximum)
     return maximum
@@ -401,7 +469,8 @@ def _profile_region(profile,frame,tolerance):
 
 def _inputs_to_settings(inputs):
     ids=('pitch','rib','depth','perimeter','holeclear','dx','dy','angle',
-         'corner','nodehole','minfraction')
+         'corner','nodehole','minfraction','tool_diameter','min_web',
+         'min_pocket','stock_thickness','min_skin')
     units = _units_manager()
     settings={key:_input_number(inputs,key,units) for key in ids}
     settings['depth_expression']=_input_expression(inputs,'depth')
@@ -439,6 +508,14 @@ def _validate_settings(s):
     if s['depth']<=0:raise ValueError('Extrusion depth must be positive.')
     if min(s[k] for k in ('perimeter','holeclear','corner','nodehole'))<0:
         raise ValueError('Margins, corner radius and vertex hole diameter must be non-negative.')
+    if min(s[k] for k in ('tool_diameter','min_web','min_pocket',
+                          'stock_thickness','min_skin'))<0:
+        raise ValueError('Manufacturability dimensions must be non-negative.')
+    effective_rib,_,_,_=manufacturability.effective(s)
+    if effective_rib>=s['pitch']/geometry.SQRT3:
+        raise ValueError('Effective rib width (including minimum web) is too large for the selected pitch.')
+    if s['stock_thickness']>0 and s['depth']+s['min_skin']>s['stock_thickness']+1e-8:
+        raise ValueError('Pocket depth exceeds material thickness minus minimum remaining skin.')
     # Oversized corner radii are advisory: the geometry engine keeps the
     # pockets and reports any corners it cannot round at the given radius.
     # A large vertex hole may merge with triangular cuts. Warn in the dialog,
@@ -454,6 +531,22 @@ def _geometry_warnings(s, outlines=None):
     """
     messages=[]
     pitch=s['pitch'];rib=s['rib'];corner=s['corner'];hole=s['nodehole']
+    tool=s.get('tool_diameter',0.)
+    web=s.get('min_web',0.)
+    thickness=s.get('stock_thickness',0.)
+    skin=s.get('min_skin',0.)
+    if tool>0 and corner+1e-9<tool/2:
+        messages.append(f'Corner radius will be increased to {tool*5:.3g} mm to fit the cutter.')
+    if web>rib+1e-9:
+        messages.append(f'Effective rib width will be increased to {web*10:.3g} mm to meet minimum web.')
+    if pitch>0 and max(web,rib)>=pitch/geometry.SQRT3:
+        messages.append('Effective rib width is too large for the selected pitch.')
+    if web>min(s['perimeter'],s['holeclear'])+1e-9:
+        messages.append('Effective boundary clearances will be increased to meet minimum web.')
+    if skin>0 and thickness<=0:
+        messages.append('Set material thickness to check remaining skin; thickness is assumed uniform.')
+    if thickness>0 and s['depth']+skin>thickness+1e-8:
+        messages.append('Pocket depth plus minimum skin exceeds the specified material thickness.')
     if pitch<=0:messages.append('Cell pitch must be positive for a cut.')
     if rib<=0:messages.append('Rib width must be positive for a cut.')
     if pitch>0 and rib>=pitch/geometry.SQRT3:
@@ -463,8 +556,10 @@ def _geometry_warnings(s, outlines=None):
         if corner>=maximum:
             messages.append('Pocket corner radius exceeds the space available inside a full cell; sharp corners may remain.')
     if hole>0 and rib>0 and corner>=0:
-        diameter_limit=geometry.maximum_vertex_hole_diameter(rib,corner)
-        tangency_limit=geometry.vertex_hole_tangency_diameter(rib,corner)
+        effective_rib=max(rib,web)
+        effective_corner=max(corner,tool/2.)
+        diameter_limit=geometry.maximum_vertex_hole_diameter(effective_rib,effective_corner)
+        tangency_limit=geometry.vertex_hole_tangency_diameter(effective_rib,effective_corner)
         if hole>tangency_limit+1e-7:
             messages.append(
                 f'Vertex hole diameter exceeds the rounded-pocket contact limit '
@@ -475,7 +570,7 @@ def _geometry_warnings(s, outlines=None):
         elif hole>diameter_limit+1e-7:
             messages.append(
                 'Vertex hole leaves less than the specified rib width of material '
-                f'between hole and pocket (minimum web {rib*10:.3g} mm; '
+                f'between hole and pocket (minimum web {effective_rib*10:.3g} mm; '
                 f'Auto Max Hole {diameter_limit*10:.3g} mm).')
     if hole<0:messages.append('Vertex-hole diameter must be non-negative.')
     if s['depth']<=0:messages.append('Extrusion depth must be positive for a cut.')
@@ -504,6 +599,21 @@ def _show_warnings(inputs, s, outlines=None):
     return messages
 
 
+def _show_manufacturing_report(inputs,report):
+    if report is None:return
+    messages=[]
+    if report.omitted:
+        messages.append(f'{report.omitted} cut islands omitted: insufficient cutter/pocket width or corner radius.')
+    if report.unmachinable_corners:
+        messages.append(f'{report.unmachinable_corners} cut cells had corners incompatible with the specified cutter.')
+    if report.narrow_web_count:
+        messages.append(f'{report.narrow_web_count} sampled minimum-web violations (red preview outlines).')
+    if messages:
+        field=inputs.itemById('warnings')
+        if field.text=='No geometric warnings.':field.text=''
+        field.text+=(('\n' if field.text else '')+'⚠ '+'\n⚠ '.join(messages))
+
+
 def _advisory_field_errors(s):
     """Return the exact inputs implicated by geometric invalidity/advisories."""
     issues = {}
@@ -515,6 +625,8 @@ def _advisory_field_errors(s):
     if pitch <= 0: flag('pitch')
     if rib <= 0: flag('rib')
     if pitch > 0 and rib >= pitch/geometry.SQRT3: flag('pitch','rib')
+    if pitch>0 and max(rib,s.get('min_web',0.))>=pitch/geometry.SQRT3:
+        flag('pitch','rib','min_web')
     if pitch > geometry.SQRT3 * rib and radius > 0:
         maximum = (pitch-geometry.SQRT3*rib)/(2*geometry.SQRT3)
         if radius >= maximum: flag('corner')
@@ -522,6 +634,10 @@ def _advisory_field_errors(s):
     if s['perimeter'] < 0: flag('perimeter')
     if s['holeclear'] < 0: flag('holeclear')
     if radius < 0: flag('corner')
+    for key in ('tool_diameter','min_web','min_pocket','stock_thickness','min_skin'):
+        if s.get(key,0.)<0:flag(key)
+    if s.get('stock_thickness',0.)>0 and s['depth']+s.get('min_skin',0.)>s['stock_thickness']:
+        flag('depth','stock_thickness','min_skin')
     if not 0 <= s['minfraction'] <= 100: flag('minfraction')
     return issues
 
@@ -660,12 +776,15 @@ def _source_geometry(inputs, cache=None):
 
 def _compute(inputs,max_cells=1600,source_cache=None):
     face,profile,frame,s,regions,origin,rotation=_source_geometry(inputs,source_cache)
-    outlines=geometry.make_pockets(regions,s['pitch'],s['rib'],s['perimeter'],
-        s['holeclear'],s['dx'],s['dy'],rotation,s['corner'],
+    _validate_settings(s)
+    rib,margin,clearance,corner=manufacturability.effective(s)
+    outlines=geometry.make_pockets(regions,s['pitch'],rib,margin,
+        clearance,s['dx'],s['dy'],rotation,corner,
         s['minfraction']/100,max_cells=max_cells,
         vertex_hole_diameter=s['nodehole'],base_origin=origin,
         anchor='triangle' if s['anchor']=='Triangle centre' else 'vertex',
         backend=s['backend'],trim_boundary=s['trim_boundary'])
+    outlines,_=manufacturability.screen(outlines,regions,s)
     if not outlines:raise ValueError('No pockets fit this region. Reduce margins or cell pitch.')
     return face,profile,frame,s,regions,outlines
 
@@ -690,6 +809,22 @@ def _draw_preview(session,data):
     obj=graphics.addLines(adsk.fusion.CustomGraphicsCoordinates.create(coords),[],False)
     obj.weight=2
     obj.color=adsk.fusion.CustomGraphicsSolidColorEffect.create(adsk.core.Color.create(12,171,235,255))
+    # Geometry stays native; red highlights only flag sampled clearance checks.
+    violations=getattr(getattr(session,'manufacturing_report',None),'web_shapes',())
+    if violations:
+        flagged=[]
+        for i in violations:
+            if not 0<=i<len(outlines):continue
+            for poly in outlines[i].loops:
+                for a,b in zip(poly,poly[1:]+poly[:1]):
+                    for uv in (a,b):
+                        pt=frame.to_world(uv,lift=0.008)
+                        flagged.extend((pt.x,pt.y,pt.z))
+        if flagged:
+            warning=graphics.addLines(adsk.fusion.CustomGraphicsCoordinates.create(flagged),[],False)
+            warning.weight=3
+            warning.color=adsk.fusion.CustomGraphicsSolidColorEffect.create(
+                adsk.core.Color.create(240,75,47,255))
     APP.activeViewport.refresh()
     preview_timing.log('fusion.draw_complete', elapsed=time.perf_counter()-started)
 
@@ -831,7 +966,7 @@ def _create_feature(data):
         saved=dict(settings)
         saved['faceToken']=source_face_token
         saved['sketchProfileToken']=source_profile_token
-        saved['schemaVersion']=7
+        saved['schemaVersion']=8
         feature.attributes.add(ATTRIBUTE_GROUP,'settings',json.dumps(saved))
         sketch.attributes.add(ATTRIBUTE_GROUP,'settings',json.dumps(saved))
         return feature
@@ -866,6 +1001,9 @@ class Session:
         self.last_signature = None
         self.failed_signature = None
         self.snapshot = None
+        self.manufacturing_report = None
+        self.presets = presets.Store()
+        self.preset_manual_membership = set()
         self.worker = async_engine.LatestWorker(
             lambda: APP.fireCustomEvent(CUSTOM_EVENT_ID))
 
@@ -911,7 +1049,8 @@ class Session:
         geom_s=((k,v) for k,v in s.items()
                 if k not in ('depth','depth_expression'))
         signature=(source_key,tuple(sorted(geom_s)),origin,rotation)
-        prep_key=(source_key,s['perimeter'],s['holeclear'],s['backend'])
+        _,margin,clearance,_=manufacturability.effective(s)
+        prep_key=(source_key,margin,clearance,s['backend'])
         payload={'regions':regions, 'settings':s.copy(), 'origin':origin,
                  'rotation':rotation, 'anchor':anchor,'prep_key':prep_key}
         return signature,(face,profile,frame,s,regions),payload
@@ -942,11 +1081,13 @@ class Session:
                         depth_expression=payload['settings']['depth_expression'])
                     if not inputs.itemById('show_preview').value:
                         self.clear_preview()
+                    _show_manufacturing_report(inputs,self.manufacturing_report)
                 return
             self.failed_signature=None
             self.last_signature=signature
             self.cache=None
             self.cache_signature=None
+            self.manufacturing_report=None
             self.clear_preview()   # Prevent stale outlines being mistaken for current geometry.
             self.snapshot=(signature,model,payload)
             self.busy=True
@@ -1006,6 +1147,7 @@ class Session:
         total=sum(len(shape.loops) for shape in outlines)
         holes=sum(shape.circle is not None for shape in outlines)
         _refresh_field_feedback(inputs,outlines)
+        _show_manufacturing_report(inputs,self.manufacturing_report)
         inputs.itemById('status').text=(f'{self.fit_summary}'
              f'{len(outlines)-holes} cells · {holes} vertex holes · {total} contours. '
              f'Geometry: {geometry.geometry_backend(_inputs_to_settings(inputs)["backend"])}. '
@@ -1096,6 +1238,7 @@ class Session:
                          depth_expression=current_settings['depth_expression'])
                 data=(face,profile,frame,s,regions,message['value'])
                 self.cache=data;self.cache_signature=signature
+                self.manufacturing_report=message.get('manufacturing_report')
                 self.busy=False;self.pending_kind=None
                 self._preview_text(self.inputs,data)
                 self._activity('ready','Preview current')
@@ -1177,6 +1320,11 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
                 'corner':('Pocket corner radius','1.5 mm','mm'),
                 'nodehole':('Vertex hole diameter (0 = off)','3 mm','mm'),
                 'minfraction':('Minimum pocket area (%)','5',''),
+                'tool_diameter':('Cutter diameter (0 = off)','0 mm','mm'),
+                'min_web':('Minimum material web (0 = off)','0 mm','mm'),
+                'min_pocket':('Minimum usable pocket diameter (0 = off)','0 mm','mm'),
+                'stock_thickness':('Material thickness, if uniform','0 mm','mm'),
+                'min_skin':('Minimum remaining skin (0 = off)','0 mm','mm'),
             }
             for key,(title,value,units) in defaults.items():
                 if key in ADVISORY_INPUT_UNITS:
@@ -1204,6 +1352,22 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
             dropdown('fit_choice','Auto Fit candidates',('Click Find Fits to calculate layouts',))
             inputs.itemById('fit_choice').tooltip=(
                 'Select a computed fit to copy its pitch and X/Y offsets into the normal fields.')
+            # Sparse, named user presets; membership is explicitly selectable.
+            preset_group=inputs.addGroupCommandInput('preset_group','Parameter presets')
+            preset_group.isExpanded=False
+            controls=preset_group.children
+            presets_dropdown=controls.addDropDownCommandInput(
+                'preset_choice','Saved preset',adsk.core.DropDownStyles.TextListDropDownStyle)
+            controls.addStringValueInput('preset_name','Name to save','')
+            controls.addBoolValueInput('preset_save','Save selected values',False,'',False)
+            controls.addBoolValueInput('preset_delete','Delete selected preset',False,'',False)
+            fields_group=controls.addGroupCommandInput('preset_fields_group','Values to include when saving')
+            fields_group.isExpanded=False
+            for key in presets.FIELDS:
+                fields_group.children.addBoolValueInput('preset_include_'+key,
+                    presets.LABELS[key],True,'',False)
+            controls.addTextBoxCommandInput('preset_status','Preset status',
+                'Tick only the values this preset should change.',2,True)
             inputs.addBoolValueInput('show_preview','Show outline preview',True,'',True)
             inputs.addTextBoxCommandInput('activity','Geometry worker',
                 '<span style="color:#888888;"><b>● Idle</b></span> — Select a face',1,True)
@@ -1218,6 +1382,7 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
             _refresh_field_feedback(inputs)
             _update_placement_visibility(inputs)
             session=Session();session.inputs=inputs;session.command=command
+            _refresh_preset_choices(inputs,session.presets)
             _sessions.append(session)
             handlers=[(command.executePreview,PreviewHandler(session)),
                       (command.execute,ExecuteHandler(session)),
@@ -1242,10 +1407,81 @@ class ChangedHandler(adsk.core.InputChangedEventHandler):
     def __init__(self,session):super().__init__();self.session=session
     def notify(self,args):
         if self.session.updating:return
-        inputs=args.inputs
+        # Nested GroupCommandInput inputChanged events may supply the group's
+        # child collection, not the whole command collection.
+        inputs=getattr(self.session,'inputs',None) or args.inputs
         changed=args.input.id
         try:
-            if changed=='check_update':
+            if changed in presets.FIELDS and changed not in getattr(
+                    self.session,'preset_manual_membership',set()):
+                # A field edited since the preset editor opened is a sensible
+                # default inclusion; explicit checkbox decisions always win.
+                self.session.updating=True
+                try:
+                    try:_preset_input(inputs,'preset_include_'+changed).value=True
+                    except (KeyError,AttributeError):pass  # Legacy mock dialogs.
+                finally:self.session.updating=False
+            if changed=='preset_choice':
+                item=_preset_input(inputs,'preset_choice').selectedItem
+                name=item.name if item else ''
+                if name in self.session.presets.data:
+                    values=self.session.presets.get(name)
+                    self.session.updating=True
+                    try:
+                        for key,value in values.items():
+                            _set_preset_field(inputs,key,value)
+                        _set_preset_inclusions(inputs,values.keys())
+                        self.session.preset_manual_membership=set()
+                        _preset_input(inputs,'preset_name').value=name
+                    finally:
+                        self.session.updating=False
+                    _preset_input(inputs,'preset_status').text=(
+                        f'Applied {len(values)} values from "{name}"; other settings unchanged.')
+                    _update_placement_visibility(inputs)
+                    self.session.invalidate_fits(inputs)
+                    _refresh_field_feedback(inputs)
+                    self.session.request_preview(inputs)
+            elif changed=='preset_save':
+                field=_preset_input(inputs,'preset_save')
+                if field.value:
+                    try:
+                        name=_preset_input(inputs,'preset_name').value.strip()
+                        values=_included_preset_values(inputs)
+                        # Validate all dimensional expressions before saving.
+                        for key in values:
+                            if key in ADVISORY_INPUT_UNITS:
+                                _input_number(inputs,key)
+                        self.session.presets.put(name,values)
+                        self.session.updating=True
+                        try:_refresh_preset_choices(inputs,self.session.presets,name)
+                        finally:self.session.updating=False
+                        _preset_input(inputs,'preset_status').text=(
+                            f'Saved "{name}" with {len(values)} selected values.')
+                    finally:
+                        self.session.updating=True
+                        try:field.value=False
+                        finally:self.session.updating=False
+            elif changed=='preset_delete':
+                field=_preset_input(inputs,'preset_delete')
+                if field.value:
+                    try:
+                        item=_preset_input(inputs,'preset_choice').selectedItem
+                        name=item.name if item else ''
+                        self.session.presets.delete(name)
+                        self.session.updating=True
+                        try:_refresh_preset_choices(inputs,self.session.presets)
+                        finally:self.session.updating=False
+                        _preset_input(inputs,'preset_status').text='Deleted preset "'+name+'".'
+                    finally:
+                        self.session.updating=True
+                        try:field.value=False
+                        finally:self.session.updating=False
+            elif changed.startswith('preset_include_'):
+                self.session.preset_manual_membership.add(changed[len('preset_include_'):])
+                return
+            elif changed in ('preset_name','preset_status','preset_group','preset_fields_group'):
+                return  # Preset metadata never changes the active geometry.
+            elif changed=='check_update':
                 try:
                     if inputs.itemById('check_update').value and _update_checker:
                         _update_checker.check_now()
@@ -1306,8 +1542,12 @@ class ChangedHandler(adsk.core.InputChangedEventHandler):
                                    'fit_effort','fit_rotation'):
                     self.session.request_preview(inputs)
         except Exception as error:
-            inputs.itemById('status').text='Auto Fit: '+str(error)
-            APP.log('Isogrid Auto Fit failure:\n'+traceback.format_exc())
+            if changed.startswith('preset_'):
+                _preset_input(inputs,'preset_status').text='Preset: '+str(error)
+                APP.log('Isogrid preset failure:\n'+traceback.format_exc())
+            else:
+                inputs.itemById('status').text='Auto Fit: '+str(error)
+                APP.log('Isogrid Auto Fit failure:\n'+traceback.format_exc())
 
 
 class ValidateHandler(adsk.core.ValidateInputsEventHandler):
@@ -1377,6 +1617,8 @@ def run(context):
         importlib.reload(exact_curves)
         importlib.reload(exact_clipper)
         importlib.reload(geometry)
+        importlib.reload(manufacturability)
+        importlib.reload(presets)
         importlib.reload(fast_fit)
         importlib.reload(fitting)
         importlib.reload(async_engine)
