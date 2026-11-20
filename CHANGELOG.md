@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.7.7 — Curved boundary preview reliability and performance
+
+- Fixed the native curved-face preview's corner-repair failure by using the
+  clipper's existing closure tolerance when re-wrapping numerical contours.
+- Reduced repeated NURBS point evaluations by caching homogeneous control
+  points, using fixed-width de Boor interpolation, projecting onto cached
+  adaptive chords for nearest-point searches, and reusing minimisation values.
+- Reproduced the supplied curved DXF with Fusion's actual default pattern
+  settings: 137 cut shapes including 36 vertex holes.
+- Added regression coverage for the complete worker-to-custom-graphics preview
+  handoff (against a Fusion API shim) and for the short-offset repair contour.
+- Reload all geometry modules consistently on add-in restart so installed
+  updates cannot retain an old curves2d module in Fusion's Python runtime.
+- Retain worker-stage timing diagnostics and avoid synchronous geometry
+  recalculation when OK is pressed before the preview finishes.
+
+
 ## 0.7.6 — General planar curve support
 
 - Extended the input adapter to preserve Fusion ellipses, elliptical arcs,
