@@ -63,7 +63,7 @@ def test_regions():
     outer.extend([c.Line(mm((-172.2737345718,50.5912734718)),mm((-172.2737345718,0.))),
                   c.Line(mm((-172.2737345718,0.)),mm((0.,0.)))])
     hole=[c.circle(mm((16.6467609402,10.880843743)),2.90537115615/10.,False)]
-    assert c.close_loop(outer,5e-5), 'DXF profile closure'
+    assert c.close_loop(outer,5e-5), 'DXF profile closure and edge orientation'
     region=e.CurveRegion([(outer,True),(hole,False)])
     sampling=[(c.sample(outer,.0025),True),(c.sample(hole,.0025),False)]
     return [g.Region(sampling,curve_loops=[outer,hole])]
