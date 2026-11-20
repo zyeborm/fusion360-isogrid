@@ -203,6 +203,13 @@ def install_archive(addin_directory, expected_version, archive_bytes):
                     or any(part in ('', '.', '..') for part in path.parts)):
                 raise ValueError('Unsafe update archive path')
             relative = path.relative_to('fusion360-isogrid-main')
+            # Research/visualisation fixtures ship in GitHub's source ZIP,
+            # but are not part of the installed add-in. Check paths and link
+            # types before excluding them.
+            if stat.S_ISLNK(member.external_attr >> 16):
+                raise ValueError('Symbolic links are not accepted in an update')
+            if relative.parts[0] == 'studies':
+                continue
             if (relative.is_absolute() or len(relative.parts) > 2
                     or (len(relative.parts) == 2 and relative.parts[0] != 'tests')):
                 raise ValueError('Unexpected update archive layout')
