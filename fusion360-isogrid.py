@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(__file__))
 import geometry
 import fitting
+import fast_fit
 import async_engine
 import curves2d as exact_curves
 import exact_clipper
@@ -30,7 +31,7 @@ COMMAND_ID = 'fusion360_isogrid_create'
 COMMAND_NAME = 'fusion360-isogrid'
 # Keep the version in the running Python code, not in the on-disk manifest:
 # the updater replaces that manifest while this old code remains loaded.
-RUNNING_VERSION = '0.7.7'
+RUNNING_VERSION = '0.7.8'
 COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -1026,7 +1027,7 @@ class Session:
                 _set_input_number(inputs,name,value)
             rotation_control=inputs.itemById('angle')
             rotation_control.value=math.radians(fit.rotation-self.fit_alignment_offset)
-            self.fit_summary=(f'Fit: {fit.label} · {fit.area*100:.1f} mm² removed · '
+            self.fit_summary=(f'Fit: {fit.label} · ~{fit.area*100:.1f} mm² estimated removal · '
                 f'{fit.partials} partial pockets · longest connected run '
                 f'{fit.longest_partial_run} · fit score {fit.fit_quality:.3f}. ')
         finally:
@@ -1376,6 +1377,7 @@ def run(context):
         importlib.reload(exact_curves)
         importlib.reload(exact_clipper)
         importlib.reload(geometry)
+        importlib.reload(fast_fit)
         importlib.reload(fitting)
         importlib.reload(async_engine)
         importlib.reload(update_checker)
