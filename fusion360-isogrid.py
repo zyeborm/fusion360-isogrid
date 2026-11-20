@@ -776,12 +776,15 @@ def _source_geometry(inputs, cache=None):
 
 def _compute(inputs,max_cells=1600,source_cache=None):
     face,profile,frame,s,regions,origin,rotation=_source_geometry(inputs,source_cache)
-    outlines=geometry.make_pockets(regions,s['pitch'],s['rib'],s['perimeter'],
-        s['holeclear'],s['dx'],s['dy'],rotation,s['corner'],
+    _validate_settings(s)
+    rib,margin,clearance,corner=manufacturability.effective(s)
+    outlines=geometry.make_pockets(regions,s['pitch'],rib,margin,
+        clearance,s['dx'],s['dy'],rotation,corner,
         s['minfraction']/100,max_cells=max_cells,
         vertex_hole_diameter=s['nodehole'],base_origin=origin,
         anchor='triangle' if s['anchor']=='Triangle centre' else 'vertex',
         backend=s['backend'],trim_boundary=s['trim_boundary'])
+    outlines,_=manufacturability.screen(outlines,regions,s)
     if not outlines:raise ValueError('No pockets fit this region. Reduce margins or cell pitch.')
     return face,profile,frame,s,regions,outlines
 
@@ -806,6 +809,22 @@ def _draw_preview(session,data):
     obj=graphics.addLines(adsk.fusion.CustomGraphicsCoordinates.create(coords),[],False)
     obj.weight=2
     obj.color=adsk.fusion.CustomGraphicsSolidColorEffect.create(adsk.core.Color.create(12,171,235,255))
+    # Geometry stays native; red highlights only flag sampled clearance checks.
+    violations=getattr(getattr(session,'manufacturing_report',None),'web_shapes',())
+    if violations:
+        flagged=[]
+        for i in violations:
+            if not 0<=i<len(outlines):continue
+            for poly in outlines[i].loops:
+                for a,b in zip(poly,poly[1:]+poly[:1]):
+                    for uv in (a,b):
+                        pt=frame.to_world(uv,lift=0.008)
+                        flagged.extend((pt.x,pt.y,pt.z))
+        if flagged:
+            warning=graphics.addLines(adsk.fusion.CustomGraphicsCoordinates.create(flagged),[],False)
+            warning.weight=3
+            warning.color=adsk.fusion.CustomGraphicsSolidColorEffect.create(
+                adsk.core.Color.create(240,75,47,255))
     APP.activeViewport.refresh()
     preview_timing.log('fusion.draw_complete', elapsed=time.perf_counter()-started)
 
@@ -947,7 +966,7 @@ def _create_feature(data):
         saved=dict(settings)
         saved['faceToken']=source_face_token
         saved['sketchProfileToken']=source_profile_token
-        saved['schemaVersion']=7
+        saved['schemaVersion']=8
         feature.attributes.add(ATTRIBUTE_GROUP,'settings',json.dumps(saved))
         sketch.attributes.add(ATTRIBUTE_GROUP,'settings',json.dumps(saved))
         return feature
@@ -982,6 +1001,9 @@ class Session:
         self.last_signature = None
         self.failed_signature = None
         self.snapshot = None
+        self.manufacturing_report = None
+        self.presets = presets.Store()
+        self.preset_manual_membership = set()
         self.worker = async_engine.LatestWorker(
             lambda: APP.fireCustomEvent(CUSTOM_EVENT_ID))
 
@@ -1027,7 +1049,8 @@ class Session:
         geom_s=((k,v) for k,v in s.items()
                 if k not in ('depth','depth_expression'))
         signature=(source_key,tuple(sorted(geom_s)),origin,rotation)
-        prep_key=(source_key,s['perimeter'],s['holeclear'],s['backend'])
+        _,margin,clearance,_=manufacturability.effective(s)
+        prep_key=(source_key,margin,clearance,s['backend'])
         payload={'regions':regions, 'settings':s.copy(), 'origin':origin,
                  'rotation':rotation, 'anchor':anchor,'prep_key':prep_key}
         return signature,(face,profile,frame,s,regions),payload
@@ -1058,11 +1081,13 @@ class Session:
                         depth_expression=payload['settings']['depth_expression'])
                     if not inputs.itemById('show_preview').value:
                         self.clear_preview()
+                    _show_manufacturing_report(inputs,self.manufacturing_report)
                 return
             self.failed_signature=None
             self.last_signature=signature
             self.cache=None
             self.cache_signature=None
+            self.manufacturing_report=None
             self.clear_preview()   # Prevent stale outlines being mistaken for current geometry.
             self.snapshot=(signature,model,payload)
             self.busy=True
@@ -1122,6 +1147,7 @@ class Session:
         total=sum(len(shape.loops) for shape in outlines)
         holes=sum(shape.circle is not None for shape in outlines)
         _refresh_field_feedback(inputs,outlines)
+        _show_manufacturing_report(inputs,self.manufacturing_report)
         inputs.itemById('status').text=(f'{self.fit_summary}'
              f'{len(outlines)-holes} cells · {holes} vertex holes · {total} contours. '
              f'Geometry: {geometry.geometry_backend(_inputs_to_settings(inputs)["backend"])}. '
@@ -1212,6 +1238,7 @@ class Session:
                          depth_expression=current_settings['depth_expression'])
                 data=(face,profile,frame,s,regions,message['value'])
                 self.cache=data;self.cache_signature=signature
+                self.manufacturing_report=message.get('manufacturing_report')
                 self.busy=False;self.pending_kind=None
                 self._preview_text(self.inputs,data)
                 self._activity('ready','Preview current')
@@ -1293,6 +1320,11 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
                 'corner':('Pocket corner radius','1.5 mm','mm'),
                 'nodehole':('Vertex hole diameter (0 = off)','3 mm','mm'),
                 'minfraction':('Minimum pocket area (%)','5',''),
+                'tool_diameter':('Cutter diameter (0 = off)','0 mm','mm'),
+                'min_web':('Minimum material web (0 = off)','0 mm','mm'),
+                'min_pocket':('Minimum usable pocket diameter (0 = off)','0 mm','mm'),
+                'stock_thickness':('Material thickness, if uniform','0 mm','mm'),
+                'min_skin':('Minimum remaining skin (0 = off)','0 mm','mm'),
             }
             for key,(title,value,units) in defaults.items():
                 if key in ADVISORY_INPUT_UNITS:
@@ -1320,6 +1352,22 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
             dropdown('fit_choice','Auto Fit candidates',('Click Find Fits to calculate layouts',))
             inputs.itemById('fit_choice').tooltip=(
                 'Select a computed fit to copy its pitch and X/Y offsets into the normal fields.')
+            # Sparse, named user presets; membership is explicitly selectable.
+            preset_group=inputs.addGroupCommandInput('preset_group','Parameter presets')
+            preset_group.isExpanded=False
+            controls=preset_group.children
+            presets_dropdown=controls.addDropDownCommandInput(
+                'preset_choice','Saved preset',adsk.core.DropDownStyles.TextListDropDownStyle)
+            controls.addStringValueInput('preset_name','Name to save','')
+            controls.addBoolValueInput('preset_save','Save selected values',False,'',False)
+            controls.addBoolValueInput('preset_delete','Delete selected preset',False,'',False)
+            fields_group=controls.addGroupCommandInput('preset_fields_group','Values to include when saving')
+            fields_group.isExpanded=False
+            for key in presets.FIELDS:
+                fields_group.children.addBoolValueInput('preset_include_'+key,
+                    presets.LABELS[key],True,'',False)
+            controls.addTextBoxCommandInput('preset_status','Preset status',
+                'Tick only the values this preset should change.',2,True)
             inputs.addBoolValueInput('show_preview','Show outline preview',True,'',True)
             inputs.addTextBoxCommandInput('activity','Geometry worker',
                 '<span style="color:#888888;"><b>● Idle</b></span> — Select a face',1,True)
@@ -1334,6 +1382,7 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
             _refresh_field_feedback(inputs)
             _update_placement_visibility(inputs)
             session=Session();session.inputs=inputs;session.command=command
+            _refresh_preset_choices(inputs,session.presets)
             _sessions.append(session)
             handlers=[(command.executePreview,PreviewHandler(session)),
                       (command.execute,ExecuteHandler(session)),
