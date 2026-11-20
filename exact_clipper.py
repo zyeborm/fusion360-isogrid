@@ -20,7 +20,12 @@ class CurveRegion:
     loops: list  # [(list[Line|Arc], is_outer)]
     def __post_init__(self):
         for loop,outer in self.loops:
-            if not c.close_loop(loop):raise ValueError('Open curve boundary loop')
+            # Clipping refines numerical intersections to ~2e-5 cm and the
+            # arrangement assembler accepts closure within that tolerance.
+            # Re-wrapping a clipped contour during corner repair must use the
+            # same tolerance; the stricter 1e-6 cm default incorrectly
+            # rejected valid contours (e.g. 0.000022 mm endpoint discrepancy).
+            if not c.close_loop(loop,2e-5):raise ValueError('Open curve boundary loop')
             if outer and c.loop_area(loop)<0:
                 loop[:]=c.reverse_loop(loop)
             if not outer and c.loop_area(loop)>0:
