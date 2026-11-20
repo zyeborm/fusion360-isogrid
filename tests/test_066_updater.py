@@ -54,6 +54,16 @@ class UpdateInstallTests(unittest.TestCase):
         self.assertEqual((self.addin/'vendor'/'my-dependency.dll').read_bytes(), b'local')
         self.assertEqual(json.loads((self.addin/'fusion360-isogrid.manifest').read_text())['version'],'0.6.6')
 
+    def test_source_archive_with_studies_is_installable(self):
+        files = dict(FILES)
+        files['studies/visual_fit_study.py'] = b'# research only\n'
+        files['studies/fit_study_metrics.csv'] = b'pitch,score\n'
+        files['studies/notes/experiment.py'] = b'# nested research\n'
+        installed = install_archive(self.addin, '0.6.6', build_zip(files))
+        self.assertEqual(installed, '0.6.6')
+        self.assertFalse((self.addin/'studies').exists())
+        self.assertEqual((self.addin/'geometry.py').read_bytes(), b'# geometry new\n')
+
     def test_manifest_mismatch_rejected_without_changes(self):
         with self.assertRaisesRegex(ValueError, 'version changed'):
             install_archive(self.addin, '0.6.7', build_zip())
