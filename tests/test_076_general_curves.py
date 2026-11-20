@@ -46,13 +46,13 @@ class GeneralCurveTests(unittest.TestCase):
         prepared=e.PreparedCurves([e.CurveRegion([(path,True)])],0.,0.)
         roof_edge=next(edge for edge in prepared.edges if isinstance(edge.segment,c.Nurbs))
         self.assertTrue(roof_edge.local_boxes)
-        central=(4.,1.,6.,2.)
+        central=(4.,8.1,6.,8.5)
         self.assertTrue(c.overlaps(central,roof_edge.bbox))
         self.assertFalse(any(c.overlaps(central,box) for box in roof_edge.local_boxes))
-        pocket=[(4.,1.),(6.,1.),(5.,2.)]
+        pocket=[(4.,8.1),(6.,8.1),(5.,8.5)]
         clipped=prepared.clip(pocket)
         self.assertEqual(len(clipped),1)
-        self.assertAlmostEqual(c.loop_area(clipped[0]),1.)
+        self.assertAlmostEqual(c.loop_area(clipped[0]),.4)
 
     def test_spline_closest_parameter_remains_on_curve(self):
         curve=c.Nurbs(((0.,0.),(2.,4.),(4.,-2.),(6.,2.)),3,
