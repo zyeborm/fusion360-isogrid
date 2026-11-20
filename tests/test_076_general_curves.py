@@ -38,6 +38,29 @@ class GeneralCurveTests(unittest.TestCase):
         self.assertEqual(crossings,[])
         self.assertTrue(c.near(section.reverse().end,section.start))
 
+    def test_long_spline_candidate_boxes_keep_native_curve(self):
+        roof=c.Nurbs(((0.,8.),(3.,12.),(7.,12.),(10.,8.)),3,
+                     (0.,0.,0.,0.,1.,1.,1.,1.),(1.,)*4,0.,1.)
+        path=[c.Line((0,0),(10,0)),c.Line((10,0),(10,8)),
+              roof.reverse(),c.Line((0,8),(0,0))]
+        prepared=e.PreparedCurves([e.CurveRegion([(path,True)])],0.,0.)
+        roof_edge=next(edge for edge in prepared.edges if isinstance(edge.segment,c.Nurbs))
+        self.assertTrue(roof_edge.local_boxes)
+        central=(4.,1.,6.,2.)
+        self.assertTrue(c.overlaps(central,roof_edge.bbox))
+        self.assertFalse(any(c.overlaps(central,box) for box in roof_edge.local_boxes))
+        pocket=[(4.,1.),(6.,1.),(5.,2.)]
+        clipped=prepared.clip(pocket)
+        self.assertEqual(len(clipped),1)
+        self.assertAlmostEqual(c.loop_area(clipped[0]),1.)
+
+    def test_spline_closest_parameter_remains_on_curve(self):
+        curve=c.Nurbs(((0.,0.),(2.,4.),(4.,-2.),(6.,2.)),3,
+                      (0.,0.,0.,0.,1.,1.,1.,1.),(1.,)*4,0.,1.)
+        for t in (.07,.18,.35,.62,.88):
+            q=curve.point(t)
+            self.assertLess(c.length(c.sub(curve.point(c._closest_parameter(curve,q)),q)),1e-5)
+
     def test_exact_rational_quadratic_export_of_ellipse(self):
         ellipse=c.Ellipse((1,2),(5,0),(0,2),.3,4.8)
         items=c.ellipse_quadratics(ellipse)
