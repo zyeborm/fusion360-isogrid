@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.8 — Fast approximate layout search (development build)
+
+- Replace one full exact-clipping/fillet run per Auto Fit candidate with a single
+  polygonal, margin-aware raster preprocessing pass and constant-time samples.
+- Keep existing integer-fit quality measures, including partial-row penalties,
+  and retain the maximum-removal candidate as a distinct alternative.
+- Generate exact geometry only for the selected layout during preview/cut.
+- Use an analytic NURBS derivative as fallback for numerically microscopic
+  curve trims, preventing failed layouts with coincident secant samples.
+- Show fit area as an estimate until the exact preview is available.
+- Reload fast_fit module with the other geometry modules in Fusion.
+- Add tests verifying 1,000 trials skip make_pockets entirely.
+
+
 ## 0.7.7 — Curved boundary preview reliability and performance
 
 - Fixed the native curved-face preview's corner-repair failure by using the
