@@ -213,7 +213,9 @@ def _closest_parameter(seg,p):
         v=sub(pb,pa);d=dot(v,v)
         q=max(0.,min(1.,dot(sub(p,pa),v)/d)) if d>EPS else 0.
         t=a+(b-a)*q
-        candidates.append((length(sub(seg.point(t),p)),i))
+        # The chord projection shortlists candidates without invoking de Boor
+        # at every sample. The final minimisation uses the exact curve.
+        candidates.append((length(sub(add(pa,mul(v,q)),p)),i))
     if not candidates:return 0.
     _,i=min(candidates)
     # Include adjacent chords; a projection near a segment endpoint can have
