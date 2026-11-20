@@ -130,14 +130,9 @@ class LatestWorker:
         return shapes
 
     def _fit(self, revision, payload, cancel):
-        if payload['settings'].get('trim_boundary',True):
-            prepared = self._prepare(payload)
-        else:
-            # Fit scores always respect source face and void boundaries, even
-            # when the selected candidate will be emitted as an untrimmed grid.
-            s = payload['settings']
-            prepared = geometry.PreparedGeometry(
-                payload['regions'],s['perimeter'],s['holeclear'],s['backend'])
+        # Fit candidates use a precomputed scoring mask. Exact geometry
+        # preparation belongs to the final selected preview, not the search.
+        prepared = None
         if cancel.is_set():
             raise Cancelled()
         last_bucket = [-1]

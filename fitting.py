@@ -1,7 +1,8 @@
 """Bounded multi-start differential evolution for the existing 2D geometry engine.
 
-All trial layouts are scored by calling geometry.make_pockets, the same routine
-used to generate the final Fusion sketch. Fusion APIs are never called here.
+Trial layouts use a shared coarse, setback-aware scoring mask. The exact
+clipping/filleting engine is reserved for the selected layout and Fusion cut.
+Fusion APIs are never called here.
 Lengths are Fusion database centimetres, angles in degrees.
 """
 from dataclasses import dataclass, replace
@@ -11,6 +12,7 @@ import geometry
 import curves2d as curves
 import exact_clipper as exact
 import fit_quality
+import fast_fit
 
 
 @dataclass
@@ -111,6 +113,59 @@ def _metrics(shapes,pitch,rib,corner,region_box,area_limit,nominal,pmin,pmax,
             edge_quality,area_fraction,nominal_closeness,quality)
 
 
+def _fast_metrics(mask, regions, pitch, settings, origin, rotation, box,
+                  area_limit, nominal, pmin, pmax, boundary_length, max_cells):
+    """Score a lattice using constant-time mask samples, not exact Booleans.
+
+    The mask is built only once for the entire optimiser run. Fractions are
+    approximate and never used to generate Fusion geometry.
+    """
+    rib=settings['rib']
+    corner=settings['corner']
+    h=geometry.SQRT3*pitch/2
+    reference=geometry.rounded_triangle(((0.,0.),(pitch,0.),(pitch/2,h)),
+                                         rib/2,corner)
+    if not reference:return None
+    full=abs(geometry.area(reference))
+    min_fraction=settings['minfraction']/100.
+    total=0.;count=small=partial=0
+    sumx=sumy=0.
+    cells=[]
+    for pocket in geometry.lattice_pockets(box,pitch,rib,origin,rotation,
+                                           corner_radius=0,max_cells=max_cells):
+        f=mask.fraction(pocket)
+        if f<=min_fraction:continue
+        value=f*full
+        centre=((pocket[0][0]+pocket[1][0]+pocket[2][0])/3,
+                (pocket[0][1]+pocket[1][1]+pocket[2][1])/3)
+        count+=1
+        if f<.985:partial+=1
+        if f<.35:small+=1
+        cells.append((centre,f))
+        total+=value
+        sumx+=value*centre[0]
+        sumy+=value*centre[1]
+    if settings['nodehole']>0:
+        radius=settings['nodehole']/2
+        circle_area=math.pi*radius*radius
+        for center in geometry.lattice_vertices(box,pitch,origin,rotation):
+            if mask.circle_fits(center,radius):
+                total+=circle_area
+                sumx+=circle_area*center[0]
+                sumy+=circle_area*center[1]
+    if total<=1e-9:return None
+    x0,y0,x1,y1=box
+    displacement=math.hypot((sumx/total-(x0+x1)/2)/max(x1-x0,1e-6),
+                            (sumy/total-(y0+y1)/2)/max(y1-y0,1e-6))
+    symmetry=max(0.,1.-4*displacement)
+    edge_quality=max(0.,1.-(partial+2*small)/max(1,count))
+    area_fraction=max(0.,min(1.,total/max(area_limit,1e-9)))
+    preferred=max((pmax-pmin)/2,nominal*.1,1e-6)
+    closeness=max(0.,1.-abs(pitch-nominal)/preferred)
+    quality=fit_quality.evaluate(cells,pitch,boundary_length)
+    return total,count,small,quality.partial_count,symmetry,edge_quality,area_fraction,closeness,quality
+
+
 def _fitness(fit,objective):
     if objective=='Maximum removal':
         return fit.area_fraction
@@ -143,9 +198,9 @@ def find_fits(regions, settings, base_origin=None, anchor='vertex', rotation=Non
               prepared=None):
     """Return best-first geometric fits plus a maximum-removal alternative.
 
-    `progress(done,total)` is called at the start and periodically during the
-    search, and may raise to cancel. All evaluations use the same
-    geometry.make_pockets as the final extrusion.
+    `progress(done,total)` reports search progress and may raise to cancel.
+    Trials use a pure-Python raster surrogate. Precise clipping, fillets and
+    sketch creation are performed only when the chosen layout is generated.
     """
     s=settings
     nominal=s['pitch']
@@ -165,9 +220,10 @@ def find_fits(regions, settings, base_origin=None, anchor='vertex', rotation=Non
     # must be scored within the actual face and its voids. The fit evaluator
     # uses the same geometry engine in its trimmed mode; the selected layout
     # is subsequently drawn/generated using the user's trim choice.
-    if prepared is None:
-        prepared=geometry.PreparedGeometry(regions,s['perimeter'],s['holeclear'],
-                                           backend=s.get('backend','auto'))
+    # A single margin-aware raster is reused by the complete differential
+    # evolution search. The supplied exact PreparedGeometry (if any) remains
+    # untouched; candidate scoring deliberately never invokes its clip path.
+    mask=fast_fit.Mask(regions,pmin,s['perimeter'],s['holeclear'])
     # The mask may cover less than the selected face; a conservative area cap
     # is sufficient because it is constant across candidates.
     region_area=min(sum(curves.loop_area(loop) for loop in reg.curve_loops)
@@ -219,14 +275,11 @@ def find_fits(regions, settings, base_origin=None, anchor='vertex', rotation=Non
             fit=None
             if pitch>geometry.SQRT3*s['rib']+2*geometry.SQRT3*s['corner']:
                 try:
-                    cuts=geometry.make_pockets(
-                        regions,pitch,s['rib'],s['perimeter'],s['holeclear'],
-                        dx,dy,rot,s['corner'],s['minfraction']/100,
-                        max_cells=max_cells,vertex_hole_diameter=s['nodehole'],
-                        base_origin=base_origin,anchor=anchor,prepared=prepared,
-                        trim_boundary=True)
-                    metrics=_metrics(cuts,pitch,s['rib'],s['corner'],bx,
-                                     region_area,nominal,pmin,pmax,boundary_length)
+                    origin=geometry.lattice_origin(bx,pitch,rot,dx,dy,
+                                                   base_origin,anchor)
+                    metrics=_fast_metrics(mask,regions,pitch,s,origin,rot,bx,
+                                          region_area,nominal,pmin,pmax,
+                                          boundary_length,max_cells)
                     if metrics:
                         area,pockets,slivers,partials,symmetry,edge,frac,closeness,quality=metrics
                         fit=Fit(pitch,dx,dy,rot,area,slivers,pockets,
