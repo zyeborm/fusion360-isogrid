@@ -66,6 +66,31 @@ class GeneralCurveTests(unittest.TestCase):
         self.assertLess(c.length(c.sub(backward.start,source.start)),1e-11)
         self.assertLess(c.length(c.sub(backward.end,source.end)),1e-11)
 
+    def test_short_trimmed_spline_and_offset_tangents(self):
+        # Tiny pieces created by an intersection should retain a usable
+        # tangent instead of failing the entire batch.
+        spline=c.Nurbs(((0.,0.),(2.,3.),(5.,1.),(8.,2.)),3,
+                       (0.,0.,0.,0.,1.,1.,1.,1.),(1.,)*4,0.,1.)
+        short=spline.section(.5,.5000001)
+        tangent=short.tangent(.5)
+        self.assertGreater(c.length(tangent),.999)
+        offset=c.Offset(short,.01)
+        tangent=offset.tangent(.5)
+        self.assertGreater(c.length(tangent),.999)
+
+    def test_split_ignores_roundoff_length_line(self):
+        # Adjacent numerical intersection parameters can produce microscopic
+        # fragments. They must never reach tangent-based contour assembly.
+        tiny=c.Line((0.,0.),(1e-10,0.))
+        self.assertEqual(list(e._split_edges([tiny])),[])
+        triangle=[c.Line((0.,0.),(1.,0.)),
+                  c.Line((1.,0.),(0.,1.)),
+                  c.Line((0.,1.),(0.,0.))]
+        pieces=list(e._split_edges(triangle))
+        self.assertTrue(pieces)
+        self.assertTrue(all(c.length(c.sub(x.end,x.start))>1e-9
+                            for x in pieces))
+
     def test_nurbs_line_intersections_numeric_refinement(self):
         spline=c.Nurbs(((0.,0.),(2.,4.),(4.,0.)),2,
                        (0,0,0,1,1,1),(1.,1.,1.),0,1)
