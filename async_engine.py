@@ -181,6 +181,8 @@ class LatestWorker:
                 pass
             except Exception as exc:
                 preview_timing.log('worker.job_error', error=repr(exc))
+                for frame in traceback.extract_tb(exc.__traceback__):
+                    preview_timing.log('worker.error_frame', file=frame.filename.rsplit('/',1)[-1].rsplit('\\',1)[-1], line=frame.lineno, func=frame.name)
                 if not cancel.is_set():
                     self._publish(dict(kind='error', source=kind,
                                        revision=revision, message=str(exc),
