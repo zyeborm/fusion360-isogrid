@@ -11,6 +11,7 @@ import os
 import sys
 import importlib
 import traceback
+import time
 import html
 from pathlib import Path
 
@@ -19,7 +20,9 @@ import geometry
 import fitting
 import async_engine
 import curves2d as exact_curves
+import exact_clipper
 import update_checker
+import preview_timing
 
 APP = adsk.core.Application.get()
 UI = APP.userInterface
@@ -27,7 +30,7 @@ COMMAND_ID = 'fusion360_isogrid_create'
 COMMAND_NAME = 'fusion360-isogrid'
 # Keep the version in the running Python code, not in the on-disk manifest:
 # the updater replaces that manifest while this old code remains loaded.
-RUNNING_VERSION = '0.7.6'
+RUNNING_VERSION = '0.7.7'
 COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -623,6 +626,7 @@ def _placement(inputs,face,frame,s):
 
 
 def _source_geometry(inputs, cache=None):
+    started=time.perf_counter()
     face,profile=_selected(inputs)
     s=_inputs_to_settings(inputs)
     _validate_settings(s)
@@ -631,9 +635,11 @@ def _source_geometry(inputs, cache=None):
     source_key=(face.entityToken,profile.entityToken if profile else None,tolerance)
     if cache is not None and cache.get('key')==source_key:
         frame,regions=cache['frame'],cache['regions']
+        preview_timing.log('fusion.source_cache_hit', elapsed=time.perf_counter()-started)
     else:
         frame=FaceFrame(face)
         face_region=_face_region(face,frame,tolerance)
+        preview_timing.log('fusion.face_extracted', elapsed=time.perf_counter()-started, loops=len(face_region.loops))
         regions=[face_region]
         if profile:
             # Disallow a non-coplanar mask before any sketch geometry is projected.
@@ -647,6 +653,7 @@ def _source_geometry(inputs, cache=None):
             cache.clear()
             cache.update(key=source_key,frame=frame,regions=regions)
     origin,rotation=_placement(inputs,face,frame,s)
+    preview_timing.log('fusion.source_ready', elapsed=time.perf_counter()-started)
     return face,profile,frame,s,regions,origin,rotation
 
 
@@ -663,6 +670,8 @@ def _compute(inputs,max_cells=1600,source_cache=None):
 
 
 def _draw_preview(session,data):
+    started=time.perf_counter()
+    preview_timing.log('fusion.draw_begin', shapes=len(data[-1]))
     session.clear_preview()
     face,profile,frame,settings,regions,outlines=data
     component=face.body.parentComponent
@@ -675,11 +684,13 @@ def _draw_preview(session,data):
                 for uv in (a,b):
                     pt=frame.to_world(uv,lift=0.006)
                     coords.extend([pt.x,pt.y,pt.z])
+    preview_timing.log('fusion.draw_coordinates', elapsed=time.perf_counter()-started, vertices=len(coords)//3)
     if not coords:return
     obj=graphics.addLines(adsk.fusion.CustomGraphicsCoordinates.create(coords),[],False)
     obj.weight=2
     obj.color=adsk.fusion.CustomGraphicsSolidColorEffect.create(adsk.core.Color.create(12,171,235,255))
     APP.activeViewport.refresh()
+    preview_timing.log('fusion.draw_complete', elapsed=time.perf_counter()-started)
 
 
 def _write_sketch_segment(sketch,frame,segment):
@@ -852,11 +863,13 @@ class Session:
         self.pending_kind = None
         self.revision = None
         self.last_signature = None
+        self.failed_signature = None
         self.snapshot = None
         self.worker = async_engine.LatestWorker(
             lambda: APP.fireCustomEvent(CUSTOM_EVENT_ID))
 
     def dispose(self):
+        preview_timing.log('fusion.session_dispose', busy=self.busy, revision=self.revision)
         self.alive = False
         self.worker.close()
         self.clear_preview()
@@ -903,6 +916,7 @@ class Session:
         return signature,(face,profile,frame,s,regions),payload
 
     def request_preview(self, inputs, force=False):
+        started=time.perf_counter()
         if not self.alive or self.updating:
             return
         try:
@@ -915,7 +929,11 @@ class Session:
                 self._activity('idle','Select a face')
                 inputs.itemById('status').text='Select a planar face to preview.'
                 return
+            preview_timing.log('fusion.snapshot_begin')
             signature,model,payload=self._snapshot(inputs)
+            preview_timing.log('fusion.snapshot_complete', elapsed=time.perf_counter()-started)
+            if not force and signature==self.failed_signature:
+                return  # Do not automatically retry an identical failed preview.
             if not force and signature==self.last_signature:
                 if self.cache_signature==signature:
                     # A depth-only edit reuses the existing pocket geometry.
@@ -924,6 +942,7 @@ class Session:
                     if not inputs.itemById('show_preview').value:
                         self.clear_preview()
                 return
+            self.failed_signature=None
             self.last_signature=signature
             self.cache=None
             self.cache_signature=None
@@ -933,9 +952,11 @@ class Session:
             self.fit_running=False
             self.pending_kind='preview'
             self.revision=self.worker.submit('preview',payload)
+            preview_timing.log('fusion.preview_submitted', revision=self.revision, elapsed=time.perf_counter()-started)
             self._activity('working','Computing preview')
             inputs.itemById('status').text='Computing 2D pockets…'
         except Exception as error:
+            preview_timing.log('fusion.preview_error', elapsed=time.perf_counter()-started, error=str(error))
             self.worker.cancel()
             self.busy=False;self.fit_running=False
             self.pending_kind=None
@@ -946,6 +967,7 @@ class Session:
             inputs.itemById('status').text='Preview: '+str(error)
 
     def preview(self,args):
+        preview_timing.log('fusion.execute_preview_begin')
         # Fusion rolls back the previous executePreview transaction before
         # calling this handler. Custom graphics must therefore be constructed
         # HERE, after rollback, rather than in the asynchronous result event.
@@ -974,6 +996,7 @@ class Session:
         """
         if not self.alive or self.command is None:
             return
+        preview_timing.log('fusion.request_redraw_begin')
         if not self.command.doExecutePreview():
             APP.log('Isogrid could not request a new executePreview transaction.')
 
@@ -1042,11 +1065,15 @@ class Session:
             if message['revision']!=self.revision:
                 continue
             kind=message['kind']
+            preview_timing.log('fusion.worker_message', kind=kind, revision=message['revision'])
             if kind=='progress':
                 if self.fit_running:
                     self._activity('working',f'Auto Fit {message["done"]}/{message["total"]}')
                 continue
             if kind=='error':
+                if message['source']=='preview' and self.snapshot is not None:
+                    self.failed_signature=self.snapshot[0]
+                preview_timing.log('fusion.preview_failed', error=message['message'])
                 self.busy=False;self.fit_running=False
                 self.pending_kind=None
                 self.last_signature=None
@@ -1301,14 +1328,16 @@ class ExecuteHandler(adsk.core.CommandEventHandler):
     def notify(self,args):
         try:
             self.session.clear_preview()
+            preview_timing.log('fusion.execute_clicked', busy=self.session.busy)
             signature,_,_=self.session._snapshot(args.command.commandInputs)
-            if self.session.cache is not None and self.session.cache_signature==signature:
-                data=self.session.cache
-            else:
-                # Rare fast-click fallback, when OK precedes the worker result.
-                data=_compute(args.command.commandInputs,max_cells=1600,
-                              source_cache=self.session.source_cache)
+            if self.session.cache is None or self.session.cache_signature!=signature:
+                preview_timing.log('fusion.execute_rejected', reason='preview_not_ready')
+                args.executeFailedMessage='Isogrid preview is not ready; adjust settings and retry.'
+                return
+            data=self.session.cache
+            preview_timing.log('fusion.feature_create_begin')
             _create_feature(data)
+            preview_timing.log('fusion.feature_create_complete')
         except Exception as error:
             args.executeFailedMessage='Isogrid failed: '+str(error)
             APP.log('Isogrid failure:\n'+traceback.format_exc())
@@ -1317,12 +1346,14 @@ class ExecuteHandler(adsk.core.CommandEventHandler):
 class DestroyHandler(adsk.core.CommandEventHandler):
     def __init__(self,session):super().__init__();self.session=session
     def notify(self,args):
+        preview_timing.log('fusion.destroy_event')
         self.session.dispose()
         if self.session in _sessions:_sessions.remove(self.session)
 
 
 class BackgroundResultHandler(adsk.core.CustomEventHandler):
     def notify(self,args):
+        preview_timing.log('fusion.custom_event_received')
         for session in list(_sessions):
             try:session.consume()
             except Exception:APP.log('Isogrid custom-event failure:\n'+traceback.format_exc())
@@ -1332,10 +1363,18 @@ class BackgroundResultHandler(adsk.core.CustomEventHandler):
 
 def run(context):
     global _custom_event, _update_checker, _update_installer
+    preview_timing.log('fusion.addin_start', version=RUNNING_VERSION)
     try:
         # Fusion keeps imported helper modules in sys.modules across Add-In
         # Stop/Run cycles. Reload source after files are replaced on disk.
         # Compiled GEOS support is disabled; never reload its native module.
+        # Reload geometry primitives first: Fusion keeps sys.modules alive
+        # across Add-In Stop/Run cycles. Reloading only geometry left the old
+        # curves2d implementation installed after an update (e.g. missing
+        # Ellipse/Nurbs attributes). Keep all modules on the same generation.
+        importlib.invalidate_caches()
+        importlib.reload(exact_curves)
+        importlib.reload(exact_clipper)
         importlib.reload(geometry)
         importlib.reload(fitting)
         importlib.reload(async_engine)

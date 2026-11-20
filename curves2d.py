@@ -106,13 +106,24 @@ def _de_boor(controls,degree,knots,u):
             if u<knots[mid]:hi=mid
             else:lo=mid
         k=lo
-    d=[list(controls[j+k-p]) for j in range(p+1)]
+    # Work on three fixed homogeneous coordinates. The previous generic
+    # list/zip interpolation allocated two intermediate lists per control
+    # update, which dominates when solving thousands of spline intersections.
+    d=list(controls[k-p:k+1])
     for r in range(1,p+1):
         for j in range(p,r-1,-1):
             left=knots[j+k-p];right=knots[j+1+k-r]
             alpha=(u-left)/(right-left) if right>left else 0.
-            d[j]=[(1-alpha)*a+alpha*b for a,b in zip(d[j-1],d[j])]
+            a=d[j-1];b=d[j];beta=1.-alpha
+            d[j]=(beta*a[0]+alpha*b[0],
+                  beta*a[1]+alpha*b[1],
+                  beta*a[2]+alpha*b[2])
     return d[p]
+
+
+@lru_cache(maxsize=2048)
+def _homogeneous_controls(controls,weights):
+    return tuple((p[0]*w,p[1]*w,w) for p,w in zip(controls,weights))
 
 
 @dataclass(frozen=True)
@@ -143,13 +154,21 @@ class Nurbs:
     def middle(self):return self.point(.5)
     def point(self,t):
         u=self.u0+(self.u1-self.u0)*t
-        ctrl=[(p[0]*w,p[1]*w,w) for p,w in zip(self.controls,self.weights)]
+        ctrl=_homogeneous_controls(self.controls,self.weights)
         x,y,w=_de_boor(ctrl,self.degree,self.knots,u)
         return (x/w,y/w)
     def tangent(self,t=0.):
-        dt=min(1e-5,max(2e-7,2e-7/max(abs(self.u1-self.u0),1e-8)))
-        a=self.point(max(0.,t-dt));b=self.point(min(1.,t+dt))
-        return unit(sub(b,a))
+        # Trimming near a spline intersection can leave a very short
+        # parameter span. A fixed finite difference then rounds both
+        # evaluated points to the same coordinate, despite a valid tangent.
+        # Widen the difference within this segment before declaring a cusp.
+        for dt in (1e-5, 1e-4, 1e-3, 1e-2, .1, .5, 1.):
+            a=self.point(max(0.,t-dt))
+            b=self.point(min(1.,t+dt))
+            delta=sub(b,a)
+            if length(delta)>=EPS:
+                return unit(delta)
+        raise ValueError('Degenerate NURBS segment: no measurable tangent')
     def reverse(self):return Nurbs(self.controls,self.degree,self.knots,self.weights,self.u1,self.u0,self.periodic)
     def section(self,t0,t1):
         du=self.u1-self.u0
@@ -174,8 +193,16 @@ class Offset:
     def middle(self):return self.point(.5)
     def point(self,t):return add(self.base.point(t),mul(normal(self.base.tangent(t)),self.distance))
     def tangent(self,t=0.):
-        dt=1e-5
-        return unit(sub(self.point(min(1,t+dt)),self.point(max(0,t-dt))))
+        # The derivative of a general offset may vanish at its evolute
+        # cusp. Numerically, adjacent evaluations can also coincide near
+        # extremely short trims. Use a wider secant before falling back to
+        # the base curve's limiting direction at a stationary point.
+        for dt in (1e-5, 1e-4, 1e-3, 1e-2, .1, .5, 1.):
+            delta=sub(self.point(min(1.,t+dt)),
+                      self.point(max(0.,t-dt)))
+            if length(delta)>=EPS:
+                return unit(delta)
+        return self.base.tangent(t)
     def reverse(self):return Offset(self.base.reverse(),-self.distance)
     def section(self,t0,t1):return Offset(self.base.section(t0,t1),self.distance)
 
@@ -212,8 +239,12 @@ def _closest_parameter(seg,p):
     for i,((a,pa),(b,pb)) in enumerate(zip(points,points[1:])):
         v=sub(pb,pa);d=dot(v,v)
         q=max(0.,min(1.,dot(sub(p,pa),v)/d)) if d>EPS else 0.
-        t=a+(b-a)*q
-        candidates.append((length(sub(seg.point(t),p)),i))
+        # The adaptive chord already bounds the curve locally. Use its
+        # projected distance for the search, and evaluate the actual spline
+        # only in the selected interval. This avoids one (expensive) de Boor
+        # evaluation for every chord on every closest-point query.
+        projected=add(pa,mul(v,q))
+        candidates.append((length(sub(projected,p)),i))
     if not candidates:return 0.
     _,i=min(candidates)
     # Include adjacent chords; a projection near a segment endpoint can have
@@ -221,11 +252,15 @@ def _closest_parameter(seg,p):
     lo=points[max(0,i-1)][0];hi=points[min(len(points)-1,i+2)][0]
     phi=(math.sqrt(5)-1)/2
     x=hi-phi*(hi-lo);y=lo+phi*(hi-lo)
+    dx=length(sub(seg.point(x),p))
+    dy=length(sub(seg.point(y),p))
     for _ in range(45):
-        if length(sub(seg.point(x),p))<length(sub(seg.point(y),p)):
-            hi=y;y=x;x=hi-phi*(hi-lo)
+        if dx<dy:
+            hi=y;y=x;dy=dx;x=hi-phi*(hi-lo)
+            dx=length(sub(seg.point(x),p))
         else:
-            lo=x;x=y;y=lo+phi*(hi-lo)
+            lo=x;x=y;dx=dy;y=lo+phi*(hi-lo)
+            dy=length(sub(seg.point(y),p))
     return (lo+hi)/2
 
 

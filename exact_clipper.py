@@ -20,7 +20,12 @@ class CurveRegion:
     loops: list  # [(list[Line|Arc], is_outer)]
     def __post_init__(self):
         for loop,outer in self.loops:
-            if not c.close_loop(loop):raise ValueError('Open curve boundary loop')
+            # Clipping refines numerical intersections to ~2e-5 cm and the
+            # arrangement assembler accepts closure within that tolerance.
+            # Re-wrapping a clipped contour during corner repair must use the
+            # same tolerance; the stricter 1e-6 cm default incorrectly
+            # rejected valid contours (e.g. 0.000022 mm endpoint discrepancy).
+            if not c.close_loop(loop,2e-5):raise ValueError('Open curve boundary loop')
             if outer and c.loop_area(loop)<0:
                 loop[:]=c.reverse_loop(loop)
             if not outer and c.loop_area(loop)>0:
@@ -69,13 +74,24 @@ def _split_edges(edges):
         for t in ordered[1:]:
             if t-uniq[-1]>1e-8:uniq.append(t)
         for a,b in zip(uniq,uniq[1:]):
+            # Intersection refinements can produce pairs of almost identical
+            # cut parameters. Their short trimmed lines have no stable unit
+            # tangent and can abort the *entire* preview.
+            # Keep complete periodic curves, but suppress microscopic pieces.
+            if b-a<=1e-8:
+                continue
+            section=seg.section(a,b)
+            full_periodic=(isinstance(section,(c.Arc,c.Ellipse)) and
+                           abs(section.sweep)>math.tau-1e-7)
+            if not full_periodic and c.length(c.sub(section.start,section.end))<=1e-8:
+                continue
             # An unsplit full circle starts and ends at the same point, yet
             # contributes an entire closed boundary to the result.
-            if b-a>1e-8 and (isinstance(seg,(c.Arc,c.Ellipse)) and
-                             abs(seg.sweep*(b-a))>1e-7 or
-                             c.length(c.sub(seg.point(a),seg.point(b)))>1e-8 or
-                             not isinstance(seg,(c.Line,c.Arc,c.Ellipse))):
-                yield seg.section(a,b)
+            if (full_periodic or
+                (isinstance(section,(c.Arc,c.Ellipse)) and
+                 abs(section.sweep)>1e-8) or
+                c.length(c.sub(section.start,section.end))>1e-8):
+                yield section
 
 
 def _assemble(directed):

@@ -6,6 +6,8 @@ Fusion API access, including UI updates, stays on Fusion's main thread.
 """
 import threading
 import traceback
+import time
+import preview_timing
 
 import fitting
 import geometry
@@ -91,6 +93,7 @@ class LatestWorker:
                 self._notification_pending = False
 
     def _prepare(self, payload):
+        started=time.perf_counter()
         if not payload['settings'].get('trim_boundary',True):
             return None
         key = payload['prep_key']
@@ -99,10 +102,16 @@ class LatestWorker:
             self._prepared = geometry.PreparedGeometry(
                 payload['regions'], s['perimeter'], s['holeclear'], s['backend'])
             self._prepared_key = key
+            preview_timing.log('worker.prepare_complete', elapsed=time.perf_counter()-started, backend=self._prepared.backend)
+        else:
+            preview_timing.log('worker.prepare_cache_hit', elapsed=time.perf_counter()-started)
         return self._prepared
 
     def _preview(self, payload, cancel):
+        started=time.perf_counter()
+        preview_timing.log('worker.preview_begin')
         prepared = self._prepare(payload)
+        preview_timing.log('worker.pockets_begin', elapsed=time.perf_counter()-started)
         if cancel.is_set():
             raise Cancelled()
         s = payload['settings']
@@ -113,6 +122,7 @@ class LatestWorker:
             vertex_hole_diameter=s['nodehole'],
             base_origin=payload['origin'], anchor=payload['anchor'],
             prepared=prepared,trim_boundary=s.get('trim_boundary',True))
+        preview_timing.log('worker.pockets_complete', elapsed=time.perf_counter()-started, shapes=len(shapes))
         if cancel.is_set():
             raise Cancelled()
         if not shapes:
@@ -157,6 +167,7 @@ class LatestWorker:
                 if self._closed:
                     return
                 revision, kind, payload = self._queued
+                preview_timing.log('worker.job_start', revision=revision, kind=kind)
                 self._queued = None
                 cancel = threading.Event()
                 self._active_cancel = cancel
@@ -169,6 +180,9 @@ class LatestWorker:
             except Cancelled:
                 pass
             except Exception as exc:
+                preview_timing.log('worker.job_error', error=repr(exc))
+                for frame in traceback.extract_tb(exc.__traceback__):
+                    preview_timing.log('worker.error_frame', file=frame.filename.rsplit('/',1)[-1].rsplit('\\',1)[-1], line=frame.lineno, func=frame.name)
                 if not cancel.is_set():
                     self._publish(dict(kind='error', source=kind,
                                        revision=revision, message=str(exc),
