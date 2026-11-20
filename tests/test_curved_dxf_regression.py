@@ -80,5 +80,32 @@ class CurvedDxfPatternTests(unittest.TestCase):
         self.assertTrue(all(shape.loops for shape in shapes))
         print('curved DXF whole-pattern: %d shapes in %.3f s'%(len(shapes),elapsed))
 
+    def test_fusion_default_settings_include_vertex_holes(self):
+        # Actual UI defaults, unlike the simplified fixture above. Before
+        # the tolerance fix, corner repair failed in CurveRegion.__post_init__.
+        start=time.perf_counter()
+        shapes=g.make_pockets(test_regions(),2.,.2,.3,.3,0.,0.,0.,.15,
+                              min_area_fraction=.05,max_cells=1600,
+                              vertex_hole_diameter=.3)
+        elapsed=time.perf_counter()-start
+        self.assertEqual(len(shapes),137)
+        self.assertEqual(sum(shape.circle is not None for shape in shapes),36)
+        self.assertTrue(all(shape.loops for shape in shapes))
+        for shape in shapes:
+            for loop in shape.curve_loops or []:
+                self.assertTrue(c.close_loop(loop,2e-5))
+        self.assertLess(elapsed,30.,'Default preview exceeds 30 seconds')
+        print('curved DXF Fusion defaults: %d shapes in %.3f s'%(len(shapes),elapsed))
+
+    def test_rounding_accepts_assembler_tolerance_but_rejects_open_loop(self):
+        near_gap=2.25e-6  # cm; observed 0.0000223 mm corner-repair gap
+        contour=[c.Line((0.,0.),(2.,0.)),c.Line((2.,0.),(2.,2.)),
+                 c.Line((2.,2.),(0.,2.)),c.Line((0.,2.),(near_gap,0.))]
+        self.assertTrue(e.CurveRegion([(contour,True)]).contains((1.,1.)))
+        too_large=5e-5
+        contour[-1]=c.Line((0.,2.),(too_large,0.))
+        with self.assertRaisesRegex(ValueError,'Open curve boundary'):
+            e.CurveRegion([(contour,True)])
+
 if __name__ == '__main__':
     unittest.main()
