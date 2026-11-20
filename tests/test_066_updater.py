@@ -64,6 +64,13 @@ class UpdateInstallTests(unittest.TestCase):
         self.assertFalse((self.addin/'studies').exists())
         self.assertEqual((self.addin/'geometry.py').read_bytes(), b'# geometry new\n')
 
+    def test_github_workflow_directory_is_not_installed(self):
+        files=dict(FILES)
+        files['.github/workflows/geometry-tests.yml']=b'name: tests\\n'
+        installed=install_archive(self.addin, '0.6.6', build_zip(files))
+        self.assertEqual(installed,'0.6.6')
+        self.assertFalse((self.addin/'.github').exists())
+
     def test_manifest_mismatch_rejected_without_changes(self):
         with self.assertRaisesRegex(ValueError, 'version changed'):
             install_archive(self.addin, '0.6.7', build_zip())
