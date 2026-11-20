@@ -47,6 +47,53 @@ With trimming disabled, the 2D grid extends across the selected region's boundin
 
 ## Vertex holes
 
+### Optional manufacturability constraints (v0.8.0)
+
+The same lattice, clipping and sketch output are used whether or not the
+additional controls are enabled. The new controls are disabled at zero.
+
+`manufacturability.effective` derives the effective nominal rib width,
+external inset, clearance at voids and corner radius by taking the maximum of
+each existing value and its relevant minimum-width/tool constraint. This
+keeps the inputs independent and makes the resulting geometry deterministic.
+
+`manufacturability.screen` processes the finished cut shape polygons only
+when the user has specified cutter diameter, minimum usable pocket diameter,
+or minimum web. An adaptive inscribed-disc search suppresses cut islands
+smaller than the specified access diameter. Pockets with unresolved fillet
+warnings are suppressed when a milling cutter is specified; the unmodified
+underlying native curve segments remain the authoritative output otherwise.
+Vertex holes remain independent drillable cuts, rather than being sized to
+the pocket milling cutter.
+
+The minimum-web diagnostic compares sampled boundary segments between nearby
+cut islands, including vertex holes and source face/void contours. Its broad
+phase uses expanded bounding boxes, so typical parts avoid all-pairs segment
+comparisons. Red custom-graphics outlines mark the affected cuts. As the
+contours are sampled with finite chord tolerance, this is a geometric screen,
+not an absolute guarantee of toolpath accessibility or minimum thickness.
+For precise manufacturing verification, use Fusion's native inspection/CAM
+tools on the generated sketch and cut.
+
+Minimum remaining skin is checked against the user's *assumed uniform*
+material thickness; the add-in does not attempt to reconstruct variable
+backwall thickness from the source B-rep. An omitted thickness is reported
+if skin thickness is requested. The existing output remains one ordinary
+Fusion sketch and one extrude-cut feature, manually editable in Fusion.
+
+### Sparse presets (v0.8.0)
+
+`presets.py` stores named, versioned `{field_id: expression_or_value}` sets
+in a per-user JSON file written atomically outside the add-in directory.
+Input text expressions are preserved (including user parameter references),
+and application only mutates the included fields. Source-face selections and
+selection-dependent references are intentionally outside preset scope. All
+available expression fields, switches, lattice anchor and search effort may be
+included or omitted independently. UI checkbox membership lives in a nested
+collapsible Fusion GroupCommandInput and is resolved through its `children`
+collection, rather than assuming root `CommandInputs.itemById` will traverse
+nested inputs.
+
 Vertex holes default to 3 mm, with the existing manual diameter field remaining editable. **Auto Max Hole** is a one-shot command that reserves a **minimum radial web equal to the specified rib width** between the hole and the nearest rounded pocket.
 
 For equilateral pockets with feasible fillets, the *contact* diameter is `D_contact = 2(w + r)`, where `w` is rib width and `r` is pocket corner radius. A minimum web `w` is required on **both sides of the hole's diameter**, so the web-preserving maximum is `D_auto = max(0, D_contact - 2w) = 2r`. Thus 2 mm ribs and 1.5 mm fillets give a 7 mm *contact* diameter but a 3 mm Auto Max Hole diameter, leaving 2 mm of material to the nearest pocket. Subtracting the rib width only once would leave half the intended web thickness.
