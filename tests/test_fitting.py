@@ -27,9 +27,12 @@ class FittingTests(unittest.TestCase):
         self.assertLessEqual(len(fits),8)
         self.assertTrue(all(1.7<=fit.pitch<=2.5 for fit in fits))
         self.assertTrue(all(fit.area>0 for fit in fits))
-        self.assertEqual([fit.label for fit in fits[:4]],
-                         ['Maximum removal','Clean edges','Best symmetry',
-                          'Closest to nominal'])
+        self.assertEqual([fit.label for fit in fits[:3]],
+                         ['Integer fit','Integer fit','Integer fit'])
+        self.assertEqual(fits[-1].label,'Maximum removal')
+        self.assertGreaterEqual(fits[0].score,fits[1].score)
+        self.assertTrue(all(0 < fit.fit_quality <= 1 for fit in fits))
+        self.assertTrue(all(fit.longest_partial_run >= 0 for fit in fits))
 
     def test_rotation_selected_anchor_is_deterministic(self):
         args=dict(base_origin=(3,4),anchor='triangle',rotation=33,

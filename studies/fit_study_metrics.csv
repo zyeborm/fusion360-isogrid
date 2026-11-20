@@ -1,0 +1,25 @@
+case,layout,pitch_mm,partials,run,score,area_cm2,search_s
+120 × 40 mm strip,Manual nominal,50.0,10,10,0.5591,35.72,0.0
+120 × 40 mm strip,Legacy Clean edges,44.8,2,0,0.8641,39.2139,1.18
+120 × 40 mm strip,Maximum removal,60.62,5,5,0.6277,40.7857,1.39
+120 × 40 mm strip,Best integer fit,42.93,2,0,0.8769,37.2067,1.39
+40 × 22 mm plate,Manual nominal,13.5,10,4,0.6382,6.5518,0.0
+40 × 22 mm plate,Legacy Clean edges,18.73,4,1,0.7475,6.4462,1.46
+40 × 22 mm plate,Maximum removal,22.0,8,8,0.5939,7.0651,1.89
+40 × 22 mm plate,Best integer fit,18.73,4,1,0.7475,6.4462,1.89
+"1,000 × 450 mm plate",Manual nominal,220.0,14,2,0.6838,3119.5532,0.0
+"1,000 × 450 mm plate",Legacy Clean edges,120.0,8,2,0.8737,2429.8079,2.79
+"1,000 × 450 mm plate",Maximum removal,356.67,12,12,0.5669,3648.44,3.14
+"1,000 × 450 mm plate",Best integer fit,158.03,6,2,0.8505,2795.5342,3.14
+L-plate 160 × 110 mm,Manual nominal,40.0,21,14,0.5142,92.8959,0.0
+L-plate 160 × 110 mm,Legacy Clean edges,30.24,8,2,0.8056,86.4758,3.04
+L-plate 160 × 110 mm,Maximum removal,60.0,14,14,0.5716,101.7103,3.4
+L-plate 160 × 110 mm,Best integer fit,30.24,8,2,0.8056,86.4758,3.4
+Tapered plate 180 × 100 mm,Manual nominal,40.0,21,21,0.5383,100.3226,0.0
+Tapered plate 180 × 100 mm,Legacy Clean edges,27.48,10,5,0.771,89.9625,2.28
+Tapered plate 180 × 100 mm,Maximum removal,60.0,10,5,0.6279,111.0462,2.75
+Tapered plate 180 × 100 mm,Best integer fit,36.84,7,3,0.7955,97.814,2.75
+Arc notch + circular hole,Manual nominal,40.0,31,27,0.5636,156.3052,0.0
+Arc notch + circular hole,Legacy Clean edges,22.0,32,12,0.7075,124.2171,5.16
+Arc notch + circular hole,Maximum removal,59.55,21,21,0.5533,169.5176,5.52
+Arc notch + circular hole,Best integer fit,44.7,10,2,0.7913,157.5255,5.52

@@ -4,12 +4,13 @@ All trial layouts are scored by calling geometry.make_pockets, the same routine
 used to generate the final Fusion sketch. Fusion APIs are never called here.
 Lengths are Fusion database centimetres, angles in degrees.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 import random
 import geometry
 import curves2d as curves
 import exact_clipper as exact
+import fit_quality
 
 
 @dataclass
@@ -30,6 +31,9 @@ class Fit:
     label: str = ''
     phase_u: float = 0.0
     phase_v: float = 0.0
+    fit_quality: float = 0.0
+    longest_partial_run: int = 0
+    strip_damage: float = 0.0
 
 
 def _centroid(poly):
@@ -44,7 +48,8 @@ def _centroid(poly):
     return sx/(3*a2),sy/(3*a2)
 
 
-def _metrics(shapes,pitch,rib,corner,region_box,area_limit,nominal,pmin,pmax):
+def _metrics(shapes,pitch,rib,corner,region_box,area_limit,nominal,pmin,pmax,
+             boundary_length):
     # This is the true geometry with the corner rounds already clipped/applied;
     # native circles use their exact analytic area.
     triangle=[(0,0),(pitch,0),(pitch/2,geometry.SQRT3*pitch/2)]
@@ -53,6 +58,7 @@ def _metrics(shapes,pitch,rib,corner,region_box,area_limit,nominal,pmin,pmax):
     full=abs(curves.loop_area(exact.fillet_loop(full_curves,corner)))
     total=0.0; pocket_count=0; small=0; partial=0
     sumx=sumy=0.0
+    cells={}  # Source-pocket centroid -> combined retained-area fraction.
     for shape in shapes:
         if shape.circle:
             center,r=shape.circle
@@ -74,8 +80,15 @@ def _metrics(shapes,pitch,rib,corner,region_box,area_limit,nominal,pmin,pmax):
             if value<=1e-10: continue
             pocket_count+=1
             # A cell can fragment into multiple pieces, so count each partial.
-            if value<.96*full:partial+=1
+            if value<.985*full:partial+=1
             if value<.35*full:small+=1
+            # Use the uncut triangle as identity; a clipped triangle may be
+            # split into multiple islands.  Aggregate them before scoring.
+            centre=_centroid(shape.outline)
+            key=(round(centre[0]/max(pitch,1e-9),7),
+                 round(centre[1]/max(pitch,1e-9),7))
+            old=cells.get(key)
+            cells[key]=(centre, value/full+(old[1] if old else 0.))
             if not shape.curve_loops:
                 xc=sum(geometry.area(poly)*_centroid(poly)[0] for poly in shape.loops)/value
                 yc=sum(geometry.area(poly)*_centroid(poly)[1] for poly in shape.loops)/value
@@ -93,18 +106,19 @@ def _metrics(shapes,pitch,rib,corner,region_box,area_limit,nominal,pmin,pmax):
     area_fraction=max(0.0,min(1.0,total/max(area_limit,1e-9)))
     preferred=max((pmax-pmin)/2,nominal*.1,1e-6)
     nominal_closeness=max(0.0,1.0-abs(pitch-nominal)/preferred)
-    return total,pocket_count,small,partial,symmetry,edge_quality,area_fraction,nominal_closeness
+    quality=fit_quality.evaluate(cells.values(),pitch,boundary_length)
+    return (total,pocket_count,small,quality.partial_count,symmetry,
+            edge_quality,area_fraction,nominal_closeness,quality)
 
 
 def _fitness(fit,objective):
     if objective=='Maximum removal':
         return fit.area_fraction
-    if objective=='Clean edges':
-        return .70*fit.edge_quality+.30*fit.area_fraction
-    if objective=='Best symmetry':
-        return .66*fit.symmetry+.34*fit.area_fraction
-    if objective=='Closest to nominal':
-        return .76*fit.nominal_closeness+.24*fit.area_fraction
+    if objective=='Integer fit':
+        # Boundary quality dominates.  The small tie-breakers prevent empty
+        # or extremely sparse layouts from winning on partial-cell count alone.
+        return (.90*fit.fit_quality + .07*fit.area_fraction
+                + .03*fit.nominal_closeness)
     raise ValueError('Unknown fit objective.')
 
 
@@ -127,11 +141,11 @@ def find_fits(regions, settings, base_origin=None, anchor='vertex', rotation=Non
               pitch_min=None, pitch_max=None, allow_rotation=False,
               evaluations=480, max_cells=1600, progress=None, seed=73021,
               prepared=None):
-    """Return 4–8 alternative fits, with independently optimised objectives.
+    """Return best-first geometric fits plus a maximum-removal alternative.
 
     `progress(done,total)` is called at the start and periodically during the
-    search, and may raise to cancel. All intermediate evaluations use exactly
-    the same geometry.make_pockets as the final extrusion.
+    search, and may raise to cancel. All evaluations use the same
+    geometry.make_pockets as the final extrusion.
     """
     s=settings
     nominal=s['pitch']
@@ -159,14 +173,33 @@ def find_fits(regions, settings, base_origin=None, anchor='vertex', rotation=Non
     region_area=min(sum(curves.loop_area(loop) for loop in reg.curve_loops)
                     if reg.curve_loops else sum(geometry.area(poly) for poly,_ in reg.loops)
                     for reg in regions)
-    objectives=('Maximum removal','Clean edges','Best symmetry','Closest to nominal')
+    # One mass-removal baseline, three independent boundary-quality searches.
+    # The fit searches span logarithmic pitch bands so multiple sensible cell
+    # counts are exposed even if the global optimum has a very narrow basin.
+    objectives=('Maximum removal','Integer fit','Integer fit','Integer fit')
+    pitch_bands=[(pmin,pmax)]+[
+        (pmin*(pmax/pmin)**(i/3),pmin*(pmax/pmin)**((i+1)/3))
+        for i in range(3)]
+    # Exact perimeter, including internal cutouts, gives a scale-free estimate
+    # of how many lattice cells can intersect the boundary.
+    boundary_length=0.0
+    for region in regions:
+        if region.curve_loops is not None:
+            for loop in region.curve_loops:
+                for seg in loop:
+                    boundary_length+=(abs(seg.sweep)*seg.radius
+                        if isinstance(seg,curves.Arc)
+                        else curves.length(curves.sub(seg.end,seg.start)))
+        else:
+            for poly,_ in region.loops:
+                boundary_length+=sum(curves.length(curves.sub(b,a)) for a,b
+                                     in zip(poly,poly[1:]+poly[:1]))
     population_size=12
     variables=4 if allow_rotation else 3
     rng=random.Random(seed)
     trials=0
     trial_cache={}
     every=[]
-    leaders={}
     if progress:progress(0,evaluations)
 
     def trial(vec):
@@ -193,12 +226,15 @@ def find_fits(regions, settings, base_origin=None, anchor='vertex', rotation=Non
                         base_origin=base_origin,anchor=anchor,prepared=prepared,
                         trim_boundary=True)
                     metrics=_metrics(cuts,pitch,s['rib'],s['corner'],bx,
-                                     region_area,nominal,pmin,pmax)
+                                     region_area,nominal,pmin,pmax,boundary_length)
                     if metrics:
-                        area,pockets,slivers,partials,symmetry,edge,frac,closeness=metrics
+                        area,pockets,slivers,partials,symmetry,edge,frac,closeness,quality=metrics
                         fit=Fit(pitch,dx,dy,rot,area,slivers,pockets,
                                 partials,symmetry,edge,frac,closeness,
-                                phase_u=u,phase_v=v)
+                                phase_u=u,phase_v=v,
+                                fit_quality=quality.score,
+                                longest_partial_run=quality.longest_run,
+                                strip_damage=quality.strip_damage)
                         every.append(fit)
                 except ValueError:
                     # Invalid geometric layouts are simply infeasible points
@@ -212,16 +248,19 @@ def find_fits(regions, settings, base_origin=None, anchor='vertex', rotation=Non
 
     # Fixed total budget, split evenly across independent optimisations.
     budgets=[evaluations//4 + (i<evaluations%4) for i in range(4)]
+    pass_results=[]
     for oi,objective in enumerate(objectives):
         count=budgets[oi]
+        low,high=pitch_bands[oi]
         def random_vec():
-            v=[rng.uniform(pmin,pmax),rng.random(),rng.random()]
+            v=[rng.uniform(low,high),rng.random(),rng.random()]
             if allow_rotation:v.append(rng.uniform(-30,30))
             return v
         pop=[random_vec() for _ in range(population_size)]
         # Include current manual phase, and the requested nominal pitch, when
         # inside the limits. This guarantees a familiar baseline in the pool.
-        pop[0]=[max(pmin,min(pmax,nominal)),0.0,0.0]+([0.0] if allow_rotation else [])
+        pop[0]=[max(low,min(high,nominal)),0.0,0.0]+([0.0] if allow_rotation else [])
+        pop[1]=[(low+high)/2.,.5,.5]+([0.0] if allow_rotation else [])
         fitted=[trial(x) for x in pop]
         best=None
         for item in fitted:
@@ -233,7 +272,7 @@ def find_fits(regions, settings, base_origin=None, anchor='vertex', rotation=Non
             a,b,c=(pop[j] for j in inds)
             F=.55+.35*rng.random()
             mutated=[a[j]+F*(b[j]-c[j]) for j in range(variables)]
-            mutated[0]=max(pmin,min(pmax,mutated[0]))
+            mutated[0]=max(low,min(high,mutated[0]))
             for j in (1,2):mutated[j]%=1.0
             if allow_rotation:mutated[3]=((mutated[3]+30)%60)-30
             forced=rng.randrange(variables)
@@ -246,26 +285,38 @@ def find_fits(regions, settings, base_origin=None, anchor='vertex', rotation=Non
                 pop[i]=proposed;fitted[i]=challenger
             if challenger and (best is None or _fitness(challenger,objective)>_fitness(best,objective)):
                 best=challenger
-        leaders[objective]=best
+        pass_results.append((objective,best,(low,high)))
     if not every:
         raise ValueError('Auto Fit found no valid layouts. Raise the minimum pitch or reduce margins.')
 
+    # The command auto-selects the first item; that should be a good grid fit,
+    # not the largest pockets.  Preserve maximum removal as the last explicit
+    # alternative so the user can still choose that trade-off.
     answer=[]
-    # Present objective-specific solutions first, taking the best *distinct*
-    # solution for each goal, so the drop-down contains actual alternatives.
-    for name in objectives:
-        ranked=sorted(every,key=lambda item:_fitness(item,name),reverse=True)
-        selected=next((item for item in ranked if _distinct(item,answer)),None)
+    for objective,best,(low,high) in pass_results[1:]:
+        pool=(f for f in every if low-1e-9<=f.pitch<=high+1e-9)
+        ranked=sorted(pool,key=lambda f:_fitness(f,'Integer fit'),reverse=True)
+        selected=next((f for f in ranked if
+                       all(abs(f.pitch-old.pitch)/max(old.pitch,1e-9)>.08
+                           for old in answer) and _distinct(f,answer)),None)
         if selected:
-            selected.label=name
-            selected.score=_fitness(selected,name)
+            selected.label='Integer fit'
+            selected.score=_fitness(selected,'Integer fit')
             answer.append(selected)
-    # Enrich with up to four high-area but significantly different phases/pitches.
-    for item in sorted(every,key=lambda f:f.area,reverse=True):
-        if len(answer)>=8:break
+    answer.sort(key=lambda f:f.score,reverse=True)
+    # The extra options retain different phases and pitches for user judgement;
+    # only one result is reserved for the separate maximum-removal objective.
+    ranked=sorted(every,key=lambda f:_fitness(f,'Integer fit'),reverse=True)
+    for item in ranked:
+        if len(answer)>=7:break
         if _distinct(item,answer):
             item.label='Alternative fit'
-            item.score=item.area_fraction
+            item.score=_fitness(item,'Integer fit')
             answer.append(item)
+    removal=max(every,key=lambda item:_fitness(item,'Maximum removal'))
+    # A candidate may be good under both measures; display that result under
+    # both objectives rather than making a misleading distinctness trade-off.
+    answer.append(replace(removal,label='Maximum removal',
+                          score=_fitness(removal,'Maximum removal')))
     if progress:progress(evaluations,evaluations)
     return answer

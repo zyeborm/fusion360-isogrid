@@ -27,7 +27,7 @@ COMMAND_ID = 'fusion360_isogrid_create'
 COMMAND_NAME = 'fusion360-isogrid'
 # Keep the version in the running Python code, not in the on-disk manifest:
 # the updater replaces that manifest while this old code remains loaded.
-RUNNING_VERSION = '0.7.4'
+RUNNING_VERSION = '0.7.5'
 COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -906,7 +906,8 @@ class Session:
             rotation_control=inputs.itemById('angle')
             rotation_control.value=math.radians(fit.rotation-self.fit_alignment_offset)
             self.fit_summary=(f'Fit: {fit.label} · {fit.area*100:.1f} mm² removed · '
-                f'{fit.partials} partial pockets · {fit.slivers} small pockets. ')
+                f'{fit.partials} partial pockets · longest connected run '
+                f'{fit.longest_partial_run} · fit score {fit.fit_quality:.3f}. ')
         finally:
             self.updating=False
         # Programmatic input changes are not guaranteed to fire executePreview.
@@ -991,7 +992,7 @@ class Session:
                     choices.listItems.clear()
                     for i,candidate in enumerate(self.fits):
                         title=(f'{i+1}. {candidate.label} · {candidate.pitch*10:.2f} mm · '
-                               f'{candidate.area*100:.0f} mm² · {candidate.partials} partial')
+                               f'{candidate.partials} partial · fit {candidate.fit_quality:.2f}')
                         choices.listItems.add(title,i==0)
                 finally:
                     self.updating=False

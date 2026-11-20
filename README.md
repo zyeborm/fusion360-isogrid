@@ -8,7 +8,7 @@ A Fusion 360 add-in that applies an **isogrid pattern** to a planar face of an e
 - **Optional sketch boundary** to restrict the patterned area.
 - **Adjustable grid:** Cell pitch, rib width, extrusion depth, corner radius, vertex holes, perimeter and hole clearances. Vertex holes default to 3 mm; **Auto Max Hole** calculates the largest nominal diameter that preserves a rib-width material web around an interior junction.
 - **Placement:** X/Y offsets, rotation, origin point and edge alignment.
-- **Optional Auto Fit:** Specify minimum/maximum pitch, find candidate layouts and choose one. Manual controls remain available.
+- **Optional Auto Fit:** Search pitch, phase and optional rotation for clean, integer-like lattice fits across irregular boundaries. The best fit is selected first; maximum material removal remains a separate candidate. Manual controls remain available.
 - **Interactive preview** with working/ready status and advisory geometry warnings that leave OK enabled.
 - **Trim to boundary** is on by default; turn it off to generate complete triangles and circles for manual trimming.
 
@@ -21,7 +21,7 @@ A Fusion 360 add-in that applies an **isogrid pattern** to a planar face of an e
 
 The command appears in **Solid → Add-Ins → fusion360-isogrid**.
 
-The command title displays the **currently running version** (for example, `fusion360-isogrid v0.7.4`). The command checks for updates automatically when opened and provides a **Check for Updates** button to manually query GitHub immediately, bypassing the 30-minute cache. Manual checks report **Up to date**, an available version, or a network error. When a newer version is available, **Install Update** installs it directly. After installation, restart Fusion and reopen the command to confirm the running version. Existing dependencies and other local files are preserved.
+The command title displays the **currently running version** (for example, `fusion360-isogrid v0.7.5`). The command checks for updates automatically when opened and provides a **Check for Updates** button to manually query GitHub immediately, bypassing the 30-minute cache. Manual checks report **Up to date**, an available version, or a network error. When a newer version is available, **Install Update** installs it directly. After installation, restart Fusion and reopen the command to confirm the running version. Existing dependencies and other local files are preserved.
 
 ## Use
 

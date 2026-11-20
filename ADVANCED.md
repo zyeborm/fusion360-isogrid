@@ -30,7 +30,11 @@ The calculation is nominal for ideal interior junctions. Tight or clipped pocket
 
 ## Auto Fit
 
-An optional deterministic bounded differential-evolution search evaluates the same 2D geometry that is used for the final cut. It searches pitch within user-defined limits, lattice phase and optionally rotation. It returns candidates selected for removed area, boundary quality, symmetry and closeness to nominal pitch. The extrusion depth does not participate in this 2D search.
+An optional deterministic bounded multi-start differential-evolution search evaluates the same finished 2D pockets used for the final cut. It searches pitch, lattice phase and optionally rotation. Three independent geometry-fit searches cover logarithmically spaced sections of the *user-selected* pitch range, while one separate pass maximises material removal. The best geometric fit is offered first in the command; maximum removal remains an explicit alternative. Extrusion depth does not participate in this 2D search.
+
+**Integer-like fit metric:** For each source triangle, measure the retained finished-pocket area relative to an untrimmed, rounded reference pocket; sum pieces split from the same source triangle before scoring. Partial-cell penalties include a fixed component and a `4f(1-f)` term, where `f` is the fraction retained. A spatial graph connects nearby partial triangle centroids. Long, nearly straight runs with similar retained fractions receive an additional penalty, targeting the systematic half-triangle strips seen when grid phase or pitch mismatches a boundary. The penalty is normalised by the input boundary length divided by pitch, keeping it dimensionless across 40 mm and metre-scale parts. Small tie-breakers consider relative removed area and closeness to the nominal pitch; the score is geometric only, not a strength estimate.
+
+The optimiser retains distinct pitches and phases so the user can compare alternatives. The first choice is the best geometry-fit result; the last is **Maximum removal**. The other candidates can be applied or manually adjusted. Results display pitch, partial-cell count, longest connected partial run, and fit score. The study at `studies/FINDINGS.md` compares the new method with manual nominal placement and the previous Clean Edges objective across six synthetic parts. The visual-study script needs optional Matplotlib/Pillow *only when generating plots*; the add-in itself has no additional dependencies.
 
 ## Geometry backend
 

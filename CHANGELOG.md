@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.5 — Multi-start integer-like geometric fitting
+
+- Retained differential evolution, but repurposed three of four passes to find clean fits across different parts of the allowed pitch range; kept maximum removal as a distinct objective.
+- Added per-triangle retained-area penalties and connected-run detection to discourage entire strips of truncated pockets, including on irregular boundaries.
+- Normalised boundary penalties by physical perimeter/pitch to work across different part sizes without coarse/medium/fine categories.
+- Made the best geometric fit the first, automatically selected result; maximum removal is selectable separately.
+- Added six geometry visual comparisons against the previous optimiser and regression tests for scale invariance, partial strips and deterministic alternatives.
+
 ## 0.7.4 — Manual update check
 
 - Added an always-visible **Check for Updates** button in the Fusion command.
