@@ -88,8 +88,13 @@ class CurvedDxfPatternTests(unittest.TestCase):
                               min_area_fraction=.05,max_cells=1600,
                               vertex_hole_diameter=.3)
         elapsed=time.perf_counter()-start
-        self.assertEqual(len(shapes),137)
+        self.assertEqual(len(shapes),131)
         self.assertEqual(sum(shape.circle is not None for shape in shapes),36)
+        # The old fallback generated six pointed pockets that could approach
+        # the nominal 3 mm vertex holes within 0.5 mm. Unroundable pockets
+        # are now rejected instead of silently violating the requested 1.5 mm
+        # corner radius and 2 mm rib width.
+        self.assertFalse(any(shape.fillet_warnings for shape in shapes))
         self.assertTrue(all(shape.loops for shape in shapes))
         for shape in shapes:
             for loop in shape.curve_loops or []:
