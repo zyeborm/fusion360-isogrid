@@ -1084,7 +1084,8 @@ class PreparedGeometry:
 def make_pockets(regions,pitch,rib,perimeter,void_clearance,offset_x,offset_y,
                  rotation,corner_radius=0,min_area_fraction=0.05,max_cells=2500,
                  vertex_hole_diameter=0,base_origin=None,anchor='vertex',
-                 prepared=None, backend='auto', trim_boundary=True):
+                 prepared=None, backend='auto', trim_boundary=True,
+                 rejected=None):
     if not regions:raise ValueError('No selected area.')
     if vertex_hole_diameter<0:
         raise ValueError('Vertex hole diameter must be non-negative.')
@@ -1135,6 +1136,14 @@ def make_pockets(regions,pitch,rib,perimeter,void_clearance,offset_x,offset_y,
                 issues=[]
                 curves=_exact.rounded_pocket(raw_loop,corner_radius,issues)
                 fillet_warnings+=len(issues)
+                if issues and corner_radius>0:
+                    # If neither the tangent fillets nor the full-radius
+                    # opening can fit, the fallback keeps sharp tips. Those
+                    # tips can intrude into the nominal rib web around nearby
+                    # lattice vertices. A contour that cannot honour the
+                    # user-specified radius is not a usable cut island.
+                    if rejected is not None:rejected.append('corner radius infeasible')
+                    continue
                 poly=_curves.sample(curves,chord_tolerance=.0004)
                 if len(poly)>=3 and _curves.loop_area(curves)>min_area:
                     outers.append(poly)
@@ -1174,6 +1183,9 @@ def make_pockets(regions,pitch,rib,perimeter,void_clearance,offset_x,offset_y,
             curves=fillet_curve_loop(p,corner_radius,warnings=local_warnings)
             contour=sample_curve_loop(curves)
             fillet_warnings+=len(local_warnings)
+            if local_warnings and corner_radius>0:
+                if rejected is not None:rejected.append('corner radius infeasible')
+                continue
             if len(contour)>=3 and area(contour)>min_area:
                 rounded.append(contour)
                 curve_loops.append(curves)

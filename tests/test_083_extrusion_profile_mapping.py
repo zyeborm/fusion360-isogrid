@@ -51,19 +51,55 @@ class ExtrusionProfileMappingTests(unittest.TestCase):
 
     def test_missing_sketch_profile_cannot_silently_drop_a_pocket(self):
         sketch=NS(profiles=Collection([profile(loop(['0:0']*3))]))
-        with self.assertRaisesRegex(RuntimeError,'1/2 generated cut contours'):
-            self.ui._match_generated_profiles(sketch,{'0:0','1:0'})
+        report={}
+        result=self.ui._match_generated_profiles(sketch,{'0:0','1:0'},report=report)
+        self.assertEqual(len(result),1)
+        self.assertEqual(report['missing'],['1:0'])
 
     def test_fusion_merged_two_pocket_boundaries_fails_closed(self):
         sketch=NS(profiles=Collection([profile(loop(['0:0','0:0','1:0']))]))
-        with self.assertRaisesRegex(RuntimeError,'0/2 generated cut contours'):
-            self.ui._match_generated_profiles(sketch,{'0:0','1:0'})
+        report={}
+        result=self.ui._match_generated_profiles(sketch,{'0:0','1:0'},report=report)
+        self.assertEqual(len(result),0)
+        self.assertEqual(report['missing'],['0:0','1:0'])
 
     def test_unbounded_surrounding_profile_is_excluded(self):
         sketch=NS(profiles=Collection([profile(loop(['99:0'])),
                                        profile(loop(['0:0']*3))]))
         chosen=self.ui._match_generated_profiles(sketch,{'0:0'})
         self.assertEqual(chosen,[sketch.profiles.item(1)])
+
+    def test_recomputed_fusion_profiles_with_missing_entity_tags_use_native_geometry(self):
+        # An actual Fusion ProfileCurve may refer to a regenerated curve with
+        # no attribute. Its interior profile point is still available. Check
+        # it against the exact native output, rather than a sampled polygon.
+        curves=self.ui.exact_curves
+        tri=[curves.Line((0,0),(1,0)),curves.Line((1,0),(0,1)),
+             curves.Line((0,1),(0,0))]
+        p=profile(loop([None,None,None]))
+        p.face=NS(pointOnFace=(.2,.2))
+        sketch=NS(profiles=Collection([p]),sketchToModelSpace=lambda point:point)
+        frame=NS(to_xy=lambda point:point)
+        report={}
+        result=self.ui._match_generated_profiles(sketch,{'0:0'},frame,
+            {'0:0':((0.,0.,1.,1.),tri,[],None)},report)
+        self.assertEqual(result,[p])
+        self.assertEqual(report['matched'],1)
+        self.assertEqual(report['fallback'],1)
+
+    def test_bad_profile_point_cannot_select_unrelated_area(self):
+        curves=self.ui.exact_curves
+        tri=[curves.Line((0,0),(1,0)),curves.Line((1,0),(0,1)),
+             curves.Line((0,1),(0,0))]
+        p=profile(loop([None,None,None]))
+        p.face=NS(pointOnFace=(.9,.9))
+        sketch=NS(profiles=Collection([p]),sketchToModelSpace=lambda point:point)
+        report={}
+        result=self.ui._match_generated_profiles(sketch,{'0:0'},
+            NS(to_xy=lambda point:point),
+            {'0:0':((0.,0.,1.,1.),tri,[],None)},report)
+        self.assertEqual(result,[])
+        self.assertEqual(report['missing'],['0:0'])
 
 
 if __name__=='__main__':unittest.main()
