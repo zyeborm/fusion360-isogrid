@@ -13,7 +13,6 @@ import curves2d as curves
 import exact_clipper as exact
 import fit_quality
 import fast_fit
-import manufacturability
 
 
 @dataclass
@@ -121,16 +120,13 @@ def _fast_metrics(mask, regions, pitch, settings, origin, rotation, box,
     The mask is built only once for the entire optimiser run. Fractions are
     approximate and never used to generate Fusion geometry.
     """
-    rib,_,_,corner=manufacturability.effective(settings)
+    rib=settings['rib']
+    corner=settings['corner']
     h=geometry.SQRT3*pitch/2
     reference=geometry.rounded_triangle(((0.,0.),(pitch,0.),(pitch/2,h)),
                                          rib/2,corner)
     if not reference:return None
     full=abs(geometry.area(reference))
-    usable_diameter=pitch/math.sqrt(3.)-rib
-    minimum_diameter=max(settings.get('tool_diameter',0.),
-                         settings.get('min_pocket',0.))
-    if usable_diameter<minimum_diameter:return None
     min_fraction=settings['minfraction']/100.
     total=0.;count=small=partial=0
     sumx=sumy=0.
@@ -139,8 +135,6 @@ def _fast_metrics(mask, regions, pitch, settings, origin, rotation, box,
                                            corner_radius=0,max_cells=max_cells):
         f=mask.fraction(pocket)
         if f<=min_fraction:continue
-        if minimum_diameter and usable_diameter*math.sqrt(f)<minimum_diameter:
-            continue  # Approximate skip; final generator checks actual contours.
         value=f*full
         centre=((pocket[0][0]+pocket[1][0]+pocket[2][0])/3,
                 (pocket[0][1]+pocket[1][1]+pocket[2][1])/3)
@@ -214,8 +208,7 @@ def find_fits(regions, settings, base_origin=None, anchor='vertex', rotation=Non
     pmax=float(pitch_max if pitch_max is not None else nominal*1.25)
     if pmin<=0 or pmin>=pmax:
         raise ValueError('Auto Fit minimum pitch must be smaller than maximum pitch.')
-    effective_rib,_,_,effective_corner=manufacturability.effective(s)
-    if pmax<=geometry.SQRT3*effective_rib+2*geometry.SQRT3*effective_corner:
+    if pmax<=geometry.SQRT3*s['rib']+2*geometry.SQRT3*s['corner']:
         raise ValueError('Auto Fit pitch range is incompatible with the rib width and corner radius.')
     if not 80<=evaluations<=2000:
         raise ValueError('Fit trials must be between 80 and 2000.')
@@ -230,8 +223,7 @@ def find_fits(regions, settings, base_origin=None, anchor='vertex', rotation=Non
     # A single margin-aware raster is reused by the complete differential
     # evolution search. The supplied exact PreparedGeometry (if any) remains
     # untouched; candidate scoring deliberately never invokes its clip path.
-    _,margin,clearance,_=manufacturability.effective(s)
-    mask=fast_fit.Mask(regions,pmin,margin,clearance)
+    mask=fast_fit.Mask(regions,pmin,s['perimeter'],s['holeclear'])
     # The mask may cover less than the selected face; a conservative area cap
     # is sufficient because it is constant across candidates.
     region_area=min(sum(curves.loop_area(loop) for loop in reg.curve_loops)
@@ -281,7 +273,7 @@ def find_fits(regions, settings, base_origin=None, anchor='vertex', rotation=Non
         fit=trial_cache.get(key,'uncached')
         if fit=='uncached':
             fit=None
-            if pitch>geometry.SQRT3*effective_rib+2*geometry.SQRT3*effective_corner:
+            if pitch>geometry.SQRT3*s['rib']+2*geometry.SQRT3*s['corner']:
                 try:
                     origin=geometry.lattice_origin(bx,pitch,rot,dx,dy,
                                                    base_origin,anchor)
