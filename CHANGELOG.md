@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.8.3 — Preserve all generated profiles in the extrusion cut
+
+- Select cut profiles from the sketch curves that define each Fusion outer
+  ProfileLoop. The previous selection relied on a sample point tested against
+  the generated outline's tessellation, silently omitting some valid pockets.
+- Tag each generated native sketch curve with its source pocket and loop. Read
+  the tag back through ProfileCurve.sketchEntity; Autodesk entity token strings
+  are not safe to compare directly as persistent identity keys.
+- Require every expected positive pocket contour to be represented by at least
+  one selectable Fusion profile. A missing/open/merged profile now reports the
+  affected source-loop indexes instead of silently performing a partial cut.
+- Keep negative loops (protected islands) excluded and preserve the previous
+  untrimmed-mode rule for entirely exterior pockets.
+- Test native profile matching, void exclusion, missing/merged contours and a
+  complete simulated sketch-to-extrusion path.
+
 ## 0.8.2 — Fix Fusion preset group creation
 
 - Keep the nested preset field-selection group expanded, as required by the Fusion API
