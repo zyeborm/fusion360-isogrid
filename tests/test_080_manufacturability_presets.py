@@ -45,7 +45,25 @@ class PresetTests(unittest.TestCase):
             with self.assertRaises(ValueError):store.put('empty',{})
             with self.assertRaises(ValueError):store.put('unknown',{'source_face':'token'})
             with self.assertRaises(ValueError):store.put('bad',{'trim_boundary':'true'})
+            with self.assertRaises(ValueError):store.put('obsolete',{'min_web':'3 mm'})
             self.assertEqual(store.names(),[])
+
+    def test_existing_v080_presets_drop_retired_fields_without_losing_others(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/'presets.json'
+            path.write_text(json.dumps({'version':1,'presets':{
+                'CNC':{'rib':'2 mm','tool_diameter':'6 mm',
+                       'stock_thickness':'8 mm','min_skin':'2 mm',
+                       'min_web':'3 mm','min_pocket':'5 mm'},
+                'Only legacy dimensions':{'min_web':'2 mm'}}}))
+            store=presets.Store(path)
+            self.assertEqual(store.names(),['CNC'])
+            self.assertEqual(store.get('CNC'),{
+                'rib':'2 mm','tool_diameter':'6 mm'})
+            store.put('Printing',{'tool_diameter':'0 mm'})
+            self.assertEqual(presets.Store(path).get('Printing'),
+                             {'tool_diameter':'0 mm'})
+            self.assertNotIn('min_web',json.loads(path.read_text())['presets']['CNC'])
 
     def test_native_field_application_preserves_unselected_values(self):
         ui=load_fusion_ui()
@@ -61,26 +79,47 @@ class PresetTests(unittest.TestCase):
 
 
 class ManufacturingTests(unittest.TestCase):
-    def test_effective_ribs_and_corner_follow_optional_limits(self):
-        original=dict(rib=.2,perimeter=.3,holeclear=.1,corner=.1,
-                      min_web=.4,tool_diameter=.6)
-        self.assertEqual(m.effective(original),(.4,.4,.4,.3))
-        original.update(min_web=0,tool_diameter=0)
-        self.assertEqual(m.effective(original),(.2,.3,.1,.1))
-
-    def test_usable_pocket_diameter_excludes_only_small_islands(self):
+    def test_zero_cutter_preserves_every_cut_and_skips_tool_checks(self):
         shapes=[cut(0,0,.2,.2),cut(.4,0,1.4,1.0),
                 geometry.CutShape([],[],circle=((2.,2.),.03))]
         region=geometry.Region([(square(-10,-10,10,10),True)])
-        remaining,report=m.screen(shapes,[region],{'min_pocket':.4})
-        self.assertEqual(report.omitted,1)
-        self.assertEqual(len(remaining),2)
+        settings=dict(rib=.1,perimeter=0.,holeclear=0.,tool_diameter=0.)
+        with patch.object(m,'_can_fit_disk',side_effect=AssertionError(
+                'Cutter 0 must not invoke cutter accessibility screening')):
+            remaining,report=m.screen(shapes,[region],settings)
+        self.assertIs(remaining,shapes)
+        self.assertEqual(len(remaining),3)
+        self.assertEqual(report.inaccessible_pockets,0)
+        self.assertEqual(report.unmachinable_corners,0)
+        self.assertFalse(report.cutter_shapes)
+
+    def test_nonzero_cutter_reports_unmachinable_pockets_without_omission(self):
+        shapes=[cut(0,0,.2,.2),cut(.4,0,1.4,1.0),
+                geometry.CutShape([],[],circle=((2.,2.),.03))]
+        region=geometry.Region([(square(-10,-10,10,10),True)])
+        remaining,report=m.screen(shapes,[region],dict(
+            rib=.1,perimeter=0.,holeclear=0.,tool_diameter=.4))
+        self.assertIs(remaining,shapes)
+        self.assertEqual(len(remaining),3)
+        self.assertEqual(report.inaccessible_pockets,1)
+        self.assertEqual(report.cutter_shapes,(0,))
         self.assertTrue(remaining[-1].circle)
+
+    def test_unrounded_corner_is_cutter_warning_not_automatic_deletion(self):
+        shape=cut(1,1,2,2)
+        shape.fillet_warnings=2
+        region=geometry.Region([(square(0,0,10,10),True)])
+        actual,report=m.screen([shape],[region],dict(
+            rib=.1,perimeter=.05,holeclear=.05,tool_diameter=.1))
+        self.assertEqual(len(actual),1)
+        self.assertEqual(report.unmachinable_corners,1)
+        self.assertEqual(report.cutter_shapes,(0,))
 
     def test_detect_adjacent_pocket_web_and_preview_index(self):
         shapes=[cut(1,1,2,2),cut(2.1,1,3.1,2),cut(5,5,6,6)]
         region=geometry.Region([(square(0,0,10,10),True)])
-        kept,report=m.screen(shapes,[region],{'min_web':.2})
+        kept,report=m.screen(shapes,[region],dict(
+            rib=.2,perimeter=.05,holeclear=.05))
         self.assertEqual(len(kept),3)
         self.assertEqual(report.narrow_web_count,1)
         self.assertEqual(report.web_shapes,(0,1))
@@ -89,20 +128,44 @@ class ManufacturingTests(unittest.TestCase):
     def test_detect_web_to_source_face_perimeter(self):
         shapes=[cut(.1,1,1,2),cut(3,3,4,4)]
         region=geometry.Region([(square(0,0,10,10),True)])
-        _,report=m.screen(shapes,[region],{'min_web':.2})
+        _,report=m.screen(shapes,[region],dict(
+            rib=.05,perimeter=.2,holeclear=.05))
         self.assertEqual(report.web_shapes,(0,))
 
-    def test_minimum_skin_is_checked_using_supplied_uniform_thickness(self):
+    def test_void_clearance_is_independent_of_rib_width(self):
+        shapes=[cut(3.7,4.5,3.85,5.5)]
+        region=geometry.Region([(square(0,0,10,10),True),
+                                (square(4,4,6,6)[::-1],False)])
+        _,report=m.screen(shapes,[region],dict(
+            rib=.05,perimeter=.05,holeclear=.2))
+        self.assertEqual(report.web_shapes,(0,))
+
+    def test_cutter_zero_and_nonzero_warn_without_rewriting_corner_radius(self):
         ui=load_fusion_ui()
-        inputs=Inputs(stock_thickness='4 mm',min_skin='2 mm',depth=.3)
-        with patch.object(ui,'_units_manager',return_value=Units()):
-            settings=ui._inputs_to_settings(inputs)
-            self.assertIn('minimum remaining skin',
-                self._validation_failure(ui,settings))
-        inputs.itemById('depth').value=.1
+        inputs=Inputs(corner='1.5 mm',tool_diameter='0 mm')
         with patch.object(ui,'_units_manager',return_value=Units()):
             settings=ui._inputs_to_settings(inputs)
             ui._validate_settings(settings)
+            self.assertFalse(any('cutter' in x.lower()
+                                 for x in ui._geometry_warnings(settings)))
+        inputs.itemById('tool_diameter').value='6 mm'
+        with patch.object(ui,'_units_manager',return_value=Units()):
+            settings=ui._inputs_to_settings(inputs)
+            ui._validate_settings(settings)
+            self.assertAlmostEqual(settings['corner'],.15)
+            self.assertTrue(any('cutter radius' in x
+                                for x in ui._geometry_warnings(settings)))
+        inputs.itemById('tool_diameter').value='-1 mm'
+        with patch.object(ui,'_units_manager',return_value=Units()):
+            settings=ui._inputs_to_settings(inputs)
+            self.assertIn('Cutter diameter',self._validation_failure(ui,settings))
+
+    def test_auto_vertex_hole_ignores_cutter_diameter(self):
+        ui=load_fusion_ui()
+        inputs=Inputs(corner='1.5 mm',rib='2 mm',tool_diameter='10 mm')
+        with patch.object(ui,'_units_manager',return_value=Units()):
+            new_diameter=ui._auto_vertex_hole(inputs)
+        self.assertAlmostEqual(new_diameter,.3)
 
     @staticmethod
     def _validation_failure(ui,settings):

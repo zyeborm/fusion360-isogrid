@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.8.1 — Authoritative geometry dimensions, diagnostic-only cutter setting
+
+- Retire redundant material thickness, minimum skin, minimum web and minimum
+  pocket diameter inputs. Existing rib, perimeter and void clearance values
+  remain independently authoritative, as does the existing minimum retained
+  cell area percentage.
+- Cutter diameter defaults to 0 (off); positive values report potential
+  unmachinable corner radii and sampled inaccessible pockets without changing
+  geometry or removing cuts. Native junction holes can be drilled separately.
+- Non-destructive sampled material-web checks compare pockets against the
+  actual specified rib, perimeter and void clearances; highlight violations.
+- Preserve legacy sparse preset names/fields while discarding only the four
+  retired setting keys when reading v0.8.0 saved presets.
+- Retain native Fusion sketch and cut output, with no managed-edit feature.
+
 ## 0.8.0 — Optional manufacturability controls and sparse presets
 
 - Integrate cutter diameter, minimum material web, minimum usable pocket

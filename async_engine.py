@@ -101,9 +101,8 @@ class LatestWorker:
         key = payload['prep_key']
         if key != self._prepared_key:
             s = payload['settings']
-            _,margin,clearance,_=manufacturability.effective(s)
             self._prepared = geometry.PreparedGeometry(
-                payload['regions'], margin, clearance, s['backend'])
+                payload['regions'],s['perimeter'],s['holeclear'],s['backend'])
             self._prepared_key = key
             preview_timing.log('worker.prepare_complete', elapsed=time.perf_counter()-started, backend=self._prepared.backend)
         else:
@@ -118,11 +117,10 @@ class LatestWorker:
         if cancel.is_set():
             raise Cancelled()
         s = payload['settings']
-        rib,margin,clearance,corner=manufacturability.effective(s)
         shapes = geometry.make_pockets(
-            payload['regions'], s['pitch'], rib, margin,
-            clearance, s['dx'], s['dy'], payload['rotation'],
-            corner, s['minfraction']/100, max_cells=1600,
+            payload['regions'], s['pitch'],s['rib'],s['perimeter'],
+            s['holeclear'], s['dx'], s['dy'], payload['rotation'],
+            s['corner'], s['minfraction']/100, max_cells=1600,
             vertex_hole_diameter=s['nodehole'],
             base_origin=payload['origin'], anchor=payload['anchor'],
             prepared=prepared,trim_boundary=s.get('trim_boundary',True))

@@ -45,41 +45,34 @@ in-Fusion validation on representative user geometries.
 
 With trimming disabled, the 2D grid extends across the selected region's bounding extent. Overlapping profiles may need manual correction before machining. In trimmed mode, small fragments and corners unable to accept the full rounding radius are reported as warnings; feasible pocket geometry is preserved.
 
-## Vertex holes
+## Manufacturability diagnostics (v0.8.1)
 
-### Optional manufacturability constraints (v0.8.0)
+`manufacturability.screen` processes the *finished* 2D cut shapes as a
+non-destructive diagnostic. It compares sampled polygonal boundaries to the
+existing user-specified material-web dimensions: `rib` between neighbouring
+cut shapes, `perimeter` at exterior face/mask boundaries, and `holeclear` at
+existing voids. Junction holes are included in material-web checks.
 
-The same lattice, clipping and sketch output are used whether or not the
-additional controls are enabled. The new controls are disabled at zero.
+Cutter diameter is optional and defaults to zero. When zero, cutter-specific
+calculations are bypassed entirely. When positive, an adaptive sampled
+inscribed-disc check indicates pockets whose geometry cannot fit the cutter,
+and unresolved corner fillets are reported. The requested corner radius is
+never changed or silently replaced by the tool radius. A radius mismatch is a
+nonblocking warning in the ordinary command dialog. Native junction circles
+are treated as independently drillable features for cutter-access checks.
 
-`manufacturability.effective` derives the effective nominal rib width,
-external inset, clearance at voids and corner radius by taking the maximum of
-each existing value and its relevant minimum-width/tool constraint. This
-keeps the inputs independent and makes the resulting geometry deterministic.
+Red graphics highlights are diagnostics only. Sampled chord geometry and an
+inscribed-disc test cannot guarantee precise wall clearance, full 2D cutter
+reachability, or executable CAM toolpaths. The tool does not modify or omit
+pockets as a result of these manufacturing diagnostics.
 
-`manufacturability.screen` processes the finished cut shape polygons only
-when the user has specified cutter diameter, minimum usable pocket diameter,
-or minimum web. An adaptive inscribed-disc search suppresses cut islands
-smaller than the specified access diameter. Pockets with unresolved fillet
-warnings are suppressed when a milling cutter is specified; the unmodified
-underlying native curve segments remain the authoritative output otherwise.
-Vertex holes remain independent drillable cuts, rather than being sized to
-the pocket milling cutter.
-
-The minimum-web diagnostic compares sampled boundary segments between nearby
-cut islands, including vertex holes and source face/void contours. Its broad
-phase uses expanded bounding boxes, so typical parts avoid all-pairs segment
-comparisons. Red custom-graphics outlines mark the affected cuts. As the
-contours are sampled with finite chord tolerance, this is a geometric screen,
-not an absolute guarantee of toolpath accessibility or minimum thickness.
-For precise manufacturing verification, use Fusion's native inspection/CAM
-tools on the generated sketch and cut.
-
-Minimum remaining skin is checked against the user's *assumed uniform*
-material thickness; the add-in does not attempt to reconstruct variable
-backwall thickness from the source B-rep. An omitted thickness is reported
-if skin thickness is requested. The existing output remains one ordinary
-Fusion sketch and one extrude-cut feature, manually editable in Fusion.
+v0.8.0 also briefly introduced minimum-web, minimum-pocket-diameter,
+material-thickness, and minimum-skin inputs; they are retired in v0.8.1.
+Their meaning is already covered by existing rib/boundary geometry controls,
+minimum retained cell area, or the user's native Fusion solid and cut depth.
+Old saved presets drop those four keys on loading while retaining all other
+settings. No managed feature-editing layer is present: output remains native
+Fusion sketch and cut geometry.
 
 ### Sparse presets (v0.8.0)
 
@@ -93,6 +86,8 @@ included or omitted independently. UI checkbox membership lives in a nested
 collapsible Fusion GroupCommandInput and is resolved through its `children`
 collection, rather than assuming root `CommandInputs.itemById` will traverse
 nested inputs.
+
+## Vertex holes
 
 Vertex holes default to 3 mm, with the existing manual diameter field remaining editable. **Auto Max Hole** is a one-shot command that reserves a **minimum radial web equal to the specified rib width** between the hole and the nearest rounded pocket.
 

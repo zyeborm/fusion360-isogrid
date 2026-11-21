@@ -12,9 +12,9 @@ import tempfile
 VERSION = 1
 EXPRESSION_FIELDS = (
     'pitch','rib','depth','perimeter','holeclear','dx','dy','angle',
-    'corner','nodehole','minfraction','tool_diameter','min_web',
-    'min_pocket','stock_thickness','min_skin','fit_min_pitch','fit_max_pitch',
+    'corner','nodehole','minfraction','tool_diameter','fit_min_pitch','fit_max_pitch',
 )
+RETIRED_FIELDS = frozenset(('min_web','min_pocket','stock_thickness','min_skin'))
 BOOL_FIELDS = ('trim_boundary','fit_rotation')
 CHOICE_FIELDS = ('anchor','fit_effort')
 FIELDS = EXPRESSION_FIELDS + BOOL_FIELDS + CHOICE_FIELDS
@@ -23,9 +23,7 @@ LABELS = {
     'perimeter':'Perimeter margin','holeclear':'Void clearance',
     'dx':'X start offset','dy':'Y start offset','angle':'Grid rotation',
     'corner':'Pocket corner radius','nodehole':'Vertex hole diameter',
-    'minfraction':'Minimum pocket area (%)','tool_diameter':'Cutter diameter',
-    'min_web':'Minimum material web','min_pocket':'Minimum usable pocket diameter',
-    'stock_thickness':'Material thickness','min_skin':'Minimum remaining skin',
+    'minfraction':'Minimum retained cell area (%)','tool_diameter':'Cutter diameter',
     'fit_min_pitch':'Auto Fit minimum pitch','fit_max_pitch':'Auto Fit maximum pitch',
     'trim_boundary':'Trim to boundary / voids','fit_rotation':'Search rotations',
     'anchor':'Grid anchor','fit_effort':'Auto Fit effort',
@@ -75,7 +73,14 @@ class Store:
         self.data={}
         for name,fields in src.items():
             self._name(name)
-            self.data[name]=validate_fields(fields)
+            # v0.8.0 persisted four controls that were redundant with existing
+            # dimensions. Ignore only those retired keys when reading old
+            # presets. Unknown keys still fail closed. A preset consisting
+            # solely of retired fields has nothing meaningful to apply.
+            if not isinstance(fields,dict):raise ValueError('Invalid preset fields.')
+            active={k:v for k,v in fields.items() if k not in RETIRED_FIELDS}
+            if active:
+                self.data[name]=validate_fields(active)
 
     @staticmethod
     def _name(name):

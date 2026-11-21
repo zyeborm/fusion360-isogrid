@@ -10,7 +10,7 @@ A Fusion 360 add-in that applies an **isogrid pattern** to a planar face of an e
 - **Placement:** X/Y offsets, rotation, origin point and edge alignment.
 - **Optional Auto Fit:** Search pitch, phase and optional rotation for clean, integer-like lattice fits across irregular boundaries. The best fit is selected first; maximum material removal remains a separate candidate. Manual controls remain available. The search scores a margin-aware raster approximation rather than repeatedly constructing exact cut geometry; the selected layout uses the full native-curve clipping engine for preview and extrusion. Fit metrics are estimates until the selected preview completes.
 - **Interactive preview** with working/ready status and advisory geometry warnings that leave OK enabled.
-- **Optional manufacturability inputs, integrated into the main dialog:** cutter diameter, minimum material web, minimum usable pocket diameter, and an assumed uniform material thickness / minimum remaining skin. Zero disables each new constraint. Cutter diameter increases the effective corner radius. The web limit increases the effective rib width and edge clearances. Infeasible pocket islands are omitted and reported, and sampled web violations are outlined in red. Existing vertex holes remain independent drillable features.
+- **Manufacturability diagnostics:** The existing rib width, perimeter and void clearances are checked against finished sampled contours. An optional cutter diameter (0 = off) adds tool-radius and cutter-access checks. Violations are highlighted in red, without altering or omitting pocket geometry.
 - **Sparse named parameter presets:** expand **Parameter presets**, tick any combination of numeric expressions, switches, grid anchor, or fit effort, and save a user-defined name. Applying a preset changes only those selected values; other active settings and the selected face remain untouched. Edited parameters are preselected for saving unless manually excluded. Presets preserve expression text and are saved per user as JSON outside the installed add-in.
 - **Trim to boundary** is on by default; turn it off to generate complete triangles and circles for manual trimming.
 
@@ -23,30 +23,26 @@ A Fusion 360 add-in that applies an **isogrid pattern** to a planar face of an e
 
 The command appears in **Solid → Add-Ins → fusion360-isogrid**.
 
-### Manufacturability settings
+### Manufacturability diagnostics
 
-The additional dimensions are optional (default **0 mm**). They are applied
-to the existing patterning workflow; there is no separate manufacturing mode.
+The existing **rib width**, **perimeter margin** and **clearance at voids**
+remain authoritative. A post-generation sampled-geometry check reports cuts
+that violate these specified material webs, including vertex holes. The
+existing minimum retained cell area (%) control discards partial pocket islands
+below its area threshold during the normal geometry-generation step.
 
-- **Cutter diameter:** sets a floor on the *inside pocket corner radius* (half
-  the cutter diameter), and omits pockets without a usable cutter-centre
-  location or where corner repair could not retain that radius. Vertex holes
-  are left for independent drilling.
-- **Minimum material web:** establishes a lower bound for the rib width,
-  perimeter margin and clearance at existing voids. The finished sampled cut
-  contours are also checked against one another and the source boundary;
-  violations are highlighted in red with a warning count. This sampled check
-  is a manufacturing diagnostic, not a metrology certificate.
-- **Minimum usable pocket diameter:** omits cut islands too small to contain
-  an inscribed circle of the specified diameter (a conservative minimum
-  access check, not a complete toolpath-accessibility proof).
-- **Material thickness / Minimum remaining skin:** when the material thickness
-  is supplied, the requested pocket depth must leave at least the specified
-  skin. Thickness is assumed uniform; the add-in does not infer local stock
-  thickness from complex B-reps.
+**Cutter diameter** is the only new manufacturing input, defaulting to **0 mm**:
 
-The output remains a normal, manually editable Fusion sketch and extrusion
-cut, without any managed-editing or replacement-feature mechanism.
+- **0 mm:** No tool-radius or accessibility checks. Suited to printing,
+  casting, and other processes where a milling cutter does not apply.
+- **Greater than 0 mm:** Reports corners that could not be rounded and pocket
+  regions that cannot contain a disk of the specified tool diameter. A cutter
+  radius larger than the requested pocket corner radius produces an advisory.
+
+These checks **never modify the requested rib width, corner radius or margins**
+and **never suppress pockets**. They use polygonal samples for diagnostics,
+not a complete CNC toolpath-accessibility proof. The output remains a normal,
+manually editable Fusion sketch and extrusion cut.
 
 ### Named parameter presets
 

@@ -1,4 +1,4 @@
-"""Optional manufacturability constraints on native Isogrid cut shapes.
+"""Non-destructive manufacturability diagnostics for native Isogrid cuts.
 
 Only the generated *view polygons* are used for the clearance screening; the
 original native Fusion curves remain the source of truth for sketch output.
@@ -12,25 +12,12 @@ import geometry
 
 @dataclass(frozen=True)
 class Report:
-    omitted: int = 0
     unmachinable_corners: int = 0
+    inaccessible_pockets: int = 0
     narrow_web_count: int = 0
-    web_shapes: tuple = ()  # Indexes into retained list, for preview highlighting.
+    web_shapes: tuple = ()  # Original shape indexes for preview highlighting.
+    cutter_shapes: tuple = ()
     minimum_web_cm: float | None = None
-
-
-def effective(settings):
-    """Return geometry generation dimensions after optional constraints.
-
-    Rib and boundary margin are minimum *material* widths. Cutter diameter
-    dictates a minimum internal corner radius for machinable pockets.
-    """
-    minimum=max(0.,settings.get('min_web',0.))
-    cutter=max(0.,settings.get('tool_diameter',0.))
-    return (max(settings['rib'],minimum),
-            max(settings['perimeter'],minimum),
-            max(settings['holeclear'],minimum),
-            max(settings['corner'],cutter/2.))
 
 
 def _segment_distance(a,b,c,d):
@@ -134,77 +121,63 @@ def _closest_loops(a,b,limit):
 
 
 def screen(shapes, regions, settings):
-    """Apply opt-in minimum usable pocket diameter and report web violations.
+    """Check existing geometry, never change or omit a shape.
 
-    Cutter clearance and min usable-pocket size suppress entire unusable cut
-    islands. Existing sketch entities are untouched; reports refer to the
-    retained native shapes and can be overlaid in Fusion's preview.
+    Tool diameter 0 disables all cutter checks (e.g. for printed parts).
+    The baseline geometric web check uses each user-specified dimension:
+    rib width between cuts, perimeter margin at exterior edges and void
+    clearance at holes. All measurements use sampled outline polygons.
     """
-    diameter=max(settings.get('tool_diameter',0.),settings.get('min_pocket',0.))
-    retained=[];omitted=0;unmachinable_corners=0
-    for shape in shapes:
-        if settings.get('tool_diameter',0.)>0 and shape.fillet_warnings:
-            # The exact geometry engine left one or more corners sharp
-            # because the requested radius could not fit. That is acceptable
-            # for general patterning, but not for an explicitly sized mill.
-            # Affected source cells are omitted instead of emitting a pocket
-            # which the named cutter could never machine.
-            omitted+=1
-            unmachinable_corners+=1
-            continue
-        if not diameter:
-            retained.append(shape);continue
-        if shape.circle:
-            # Junction holes can be drilled independently of the pocket
-            # milling cutter. A pocket-width limit must not delete them.
-            retained.append(shape);continue
-        keep_loops=[];keep_curves=[]
-        for i,loop in enumerate(shape.loops):
-            if geometry.area(loop)<=0:
-                # Attached hole contours remain with their enclosing island;
-                # they are accounted for in the cutter-centre test below.
-                continue
-            holes=[h for h in shape.loops if geometry.area(h)<0 and
-                   geometry.in_poly(h[0],loop,False)]
-            if _can_fit_disk([loop]+holes,diameter/2):
-                keep_loops.append(loop)
-                if shape.curve_loops:keep_curves.append(shape.curve_loops[i])
-                for h in holes:
-                    keep_loops.append(h)
-                    if shape.curve_loops:
-                        j=next((j for j,other in enumerate(shape.loops) if other is h),None)
-                        if j is not None:keep_curves.append(shape.curve_loops[j])
-            else:omitted+=1
-        if keep_loops:
-            if len(keep_loops)==len(shape.loops):
-                retained.append(shape)
-            else:
-                retained.append(geometry.CutShape(shape.outline,keep_loops,
-                       fillet_warnings=shape.fillet_warnings,
-                       curve_loops=keep_curves if shape.curve_loops else None))
-    minimum=settings.get('min_web',0.)
-    if not minimum:return retained,Report(
-        omitted=omitted,unmachinable_corners=unmachinable_corners)
+    cutter=settings.get('tool_diameter',0.)
+    cutter_indexes=set()
+    sharp=blocked=0
+    if cutter>0:
+        for i,shape in enumerate(shapes):
+            if shape.circle:continue  # Vertex holes can be drilled independently.
+            if shape.fillet_warnings:
+                sharp+=1
+                cutter_indexes.add(i)
+            for loop in shape.loops:
+                if geometry.area(loop)<=0:continue
+                holes=[h for h in shape.loops if geometry.area(h)<0 and
+                       geometry.in_poly(h[0],loop,False)]
+                if not _can_fit_disk([loop]+holes,cutter/2.):
+                    blocked+=1
+                    cutter_indexes.add(i)
+
+    rib=settings['rib']
+    perimeter=settings['perimeter']
+    void=settings['holeclear']
     indexes=set();best=math.inf;violations=0
-    boxes=[geometry.bounds([p for loop in s.loops for p in loop]) for s in retained]
-    # Group-wide distance includes both adjacent pockets and vertex-hole cuts.
-    for i,shape in enumerate(retained):
-        for j in range(i+1,len(retained)):
-            if not geometry.boxes_overlap(boxes[i],boxes[j],minimum):continue
-            dist=_closest_loops(shape.loops,retained[j].loops,minimum)
+    # Normal vertex-hole shapes have a sampled circle in `loops`, but preserve
+    # native-circle-only shapes supplied by upstream callers or test fixtures.
+    loops_by_shape=[s.loops if s.loops else
+                    [geometry.circle_polygon(*s.circle)] if s.circle else []
+                    for s in shapes]
+    boxes=[geometry.bounds([p for loop in loops for p in loop]) if loops else None
+           for loops in loops_by_shape]
+    for i,shape in enumerate(shapes):
+        if boxes[i] is None:continue
+        # Between cuts the specified rib width is the intended material web.
+        for j in range(i+1,len(shapes)):
+            if boxes[j] is None or not geometry.boxes_overlap(boxes[i],boxes[j],rib):continue
+            dist=_closest_loops(loops_by_shape[i],loops_by_shape[j],rib)
             best=min(best,dist)
-            if dist+2e-5<minimum:  # Sampling tolerance: 0.0002 mm.
+            if dist+2e-5<rib:  # Sampling tolerance: 0.0002 mm.
                 indexes.update((i,j));violations+=1
-        # Outer face boundary and existing voids are also material interfaces.
+        # Preserve independently entered perimeter / cutout clearances.
         for region in regions:
-            for boundary,_ in region.loops:
-                if not geometry.boxes_overlap(boxes[i],geometry.bounds(boundary),minimum):continue
-                dist=_closest_loops(shape.loops,[boundary],minimum)
+            for boundary,outer in region.loops:
+                clearance=perimeter if outer else void
+                if clearance<=0:continue
+                if not geometry.boxes_overlap(boxes[i],geometry.bounds(boundary),clearance):continue
+                dist=_closest_loops(loops_by_shape[i],[boundary],clearance)
                 best=min(best,dist)
-                if dist+2e-5<minimum:
+                if dist+2e-5<clearance:
                     indexes.add(i);violations+=1
-    return retained,Report(omitted=omitted,
-                      unmachinable_corners=unmachinable_corners,
+    return shapes,Report(unmachinable_corners=sharp,
+                      inaccessible_pockets=blocked,
                       narrow_web_count=violations,
                       web_shapes=tuple(sorted(indexes)),
+                      cutter_shapes=tuple(sorted(cutter_indexes)),
                       minimum_web_cm=best if math.isfinite(best) else None)
