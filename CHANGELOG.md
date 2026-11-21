@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.4 — Restore partial cuts, reject impossible fillets and correct preview advisories
+
+- Recover missing Fusion native sketch-curve tags by matching each Fusion
+  profile's interior point against the exact generated curves rather than
+  polygonal preview tessellation. The source ownership remains the primary
+  identity for normal profiles.
+- If Fusion fails to recognise an individual source contour, cut the valid
+  recognised profiles and explicitly report the missing count and contour IDs;
+  avoid cancelling the entire feature because of one unrecognised loop.
+- Reject clipped cut islands that cannot honour the requested corner radius
+  after tangent fillet and full-radius opening attempts. These shapes are
+  omitted consistently from both preview and final cut, with a warning count.
+  This check applies independently of cutter diameter (0 keeps tool tests off).
+- Use a 0.03 mm sampled-contour tolerance for minimum-web diagnostics to
+  avoid false violation warnings caused by independently approximated spline
+  boundaries. Continue to flag materially undersized webs.
+- Extend regression tests for tagless Fusion profiles, impossible fillets,
+  false-positive clearance warnings, and preview/cut consistency.
+
 ## 0.8.3 — Preserve all generated profiles in the extrusion cut
 
 - Select cut profiles from the sketch curves that define each Fusion outer
