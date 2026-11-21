@@ -33,7 +33,7 @@ COMMAND_ID = 'fusion360_isogrid_create'
 COMMAND_NAME = 'fusion360-isogrid'
 # Keep the version in the running Python code, not in the on-disk manifest:
 # the updater replaces that manifest while this old code remains loaded.
-RUNNING_VERSION = '0.8.0'
+RUNNING_VERSION = '0.8.1'
 COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -114,8 +114,7 @@ ADVISORY_INPUT_UNITS = {
     'pitch': 'mm', 'rib': 'mm', 'perimeter': 'mm', 'holeclear': 'mm',
     'corner': 'mm', 'nodehole': 'mm', 'minfraction': '',
     'fit_min_pitch': 'mm', 'fit_max_pitch': 'mm',
-    'tool_diameter': 'mm', 'min_web': 'mm', 'min_pocket': 'mm',
-    'stock_thickness': 'mm', 'min_skin': 'mm',
+    'tool_diameter': 'mm',
 }
 
 
@@ -240,8 +239,6 @@ def _auto_vertex_hole(inputs):
     radius = _input_number(inputs, 'corner', units)
     if rib<=0 or radius<0:
         raise ValueError('Auto hole size requires a positive rib width and a non-negative corner radius.')
-    rib=max(rib,_input_number(inputs, 'min_web', units))
-    radius=max(radius,_input_number(inputs, 'tool_diameter', units)/2.)
     maximum = geometry.maximum_vertex_hole_diameter(rib, radius)
     _set_input_number(inputs, 'nodehole', maximum)
     return maximum
@@ -469,8 +466,7 @@ def _profile_region(profile,frame,tolerance):
 
 def _inputs_to_settings(inputs):
     ids=('pitch','rib','depth','perimeter','holeclear','dx','dy','angle',
-         'corner','nodehole','minfraction','tool_diameter','min_web',
-         'min_pocket','stock_thickness','min_skin')
+         'corner','nodehole','minfraction','tool_diameter')
     units = _units_manager()
     settings={key:_input_number(inputs,key,units) for key in ids}
     settings['depth_expression']=_input_expression(inputs,'depth')
@@ -508,14 +504,8 @@ def _validate_settings(s):
     if s['depth']<=0:raise ValueError('Extrusion depth must be positive.')
     if min(s[k] for k in ('perimeter','holeclear','corner','nodehole'))<0:
         raise ValueError('Margins, corner radius and vertex hole diameter must be non-negative.')
-    if min(s[k] for k in ('tool_diameter','min_web','min_pocket',
-                          'stock_thickness','min_skin'))<0:
-        raise ValueError('Manufacturability dimensions must be non-negative.')
-    effective_rib,_,_,_=manufacturability.effective(s)
-    if effective_rib>=s['pitch']/geometry.SQRT3:
-        raise ValueError('Effective rib width (including minimum web) is too large for the selected pitch.')
-    if s['stock_thickness']>0 and s['depth']+s['min_skin']>s['stock_thickness']+1e-8:
-        raise ValueError('Pocket depth exceeds material thickness minus minimum remaining skin.')
+    if s['tool_diameter']<0:
+        raise ValueError('Cutter diameter must be non-negative; 0 disables tool checks.')
     # Oversized corner radii are advisory: the geometry engine keeps the
     # pockets and reports any corners it cannot round at the given radius.
     # A large vertex hole may merge with triangular cuts. Warn in the dialog,
@@ -532,21 +522,10 @@ def _geometry_warnings(s, outlines=None):
     messages=[]
     pitch=s['pitch'];rib=s['rib'];corner=s['corner'];hole=s['nodehole']
     tool=s.get('tool_diameter',0.)
-    web=s.get('min_web',0.)
-    thickness=s.get('stock_thickness',0.)
-    skin=s.get('min_skin',0.)
+    if tool<0:messages.append('Cutter diameter must be non-negative; 0 disables cutter checks.')
     if tool>0 and corner+1e-9<tool/2:
-        messages.append(f'Corner radius will be increased to {tool*5:.3g} mm to fit the cutter.')
-    if web>rib+1e-9:
-        messages.append(f'Effective rib width will be increased to {web*10:.3g} mm to meet minimum web.')
-    if pitch>0 and max(web,rib)>=pitch/geometry.SQRT3:
-        messages.append('Effective rib width is too large for the selected pitch.')
-    if web>min(s['perimeter'],s['holeclear'])+1e-9:
-        messages.append('Effective boundary clearances will be increased to meet minimum web.')
-    if skin>0 and thickness<=0:
-        messages.append('Set material thickness to check remaining skin; thickness is assumed uniform.')
-    if thickness>0 and s['depth']+skin>thickness+1e-8:
-        messages.append('Pocket depth plus minimum skin exceeds the specified material thickness.')
+        messages.append(f'Pocket corner radius {corner*10:.3g} mm is smaller than '
+                        f'cutter radius {tool*5:.3g} mm; inspect machining feasibility.')
     if pitch<=0:messages.append('Cell pitch must be positive for a cut.')
     if rib<=0:messages.append('Rib width must be positive for a cut.')
     if pitch>0 and rib>=pitch/geometry.SQRT3:
@@ -556,10 +535,8 @@ def _geometry_warnings(s, outlines=None):
         if corner>=maximum:
             messages.append('Pocket corner radius exceeds the space available inside a full cell; sharp corners may remain.')
     if hole>0 and rib>0 and corner>=0:
-        effective_rib=max(rib,web)
-        effective_corner=max(corner,tool/2.)
-        diameter_limit=geometry.maximum_vertex_hole_diameter(effective_rib,effective_corner)
-        tangency_limit=geometry.vertex_hole_tangency_diameter(effective_rib,effective_corner)
+        diameter_limit=geometry.maximum_vertex_hole_diameter(rib,corner)
+        tangency_limit=geometry.vertex_hole_tangency_diameter(rib,corner)
         if hole>tangency_limit+1e-7:
             messages.append(
                 f'Vertex hole diameter exceeds the rounded-pocket contact limit '
@@ -570,7 +547,7 @@ def _geometry_warnings(s, outlines=None):
         elif hole>diameter_limit+1e-7:
             messages.append(
                 'Vertex hole leaves less than the specified rib width of material '
-                f'between hole and pocket (minimum web {effective_rib*10:.3g} mm; '
+                f'between hole and pocket (minimum web {rib*10:.3g} mm; '
                 f'Auto Max Hole {diameter_limit*10:.3g} mm).')
     if hole<0:messages.append('Vertex-hole diameter must be non-negative.')
     if s['depth']<=0:messages.append('Extrusion depth must be positive for a cut.')
@@ -578,7 +555,7 @@ def _geometry_warnings(s, outlines=None):
                         ('corner','Corner radius')]:
         if s[field]<0:messages.append(f'{title} must be non-negative.')
     if not 0<=s['minfraction']<=100:
-        messages.append('Minimum pocket area must be in the 0–100% range.')
+        messages.append('Minimum retained cell area must be in the 0–100% range.')
     if not s.get('trim_boundary',True):
         messages.append('Boundary trimming is off: pockets and vertex circles may cross face edges and voids.')
     if outlines is not None:
@@ -602,12 +579,15 @@ def _show_warnings(inputs, s, outlines=None):
 def _show_manufacturing_report(inputs,report):
     if report is None:return
     messages=[]
-    if report.omitted:
-        messages.append(f'{report.omitted} cut islands omitted: insufficient cutter/pocket width or corner radius.')
     if report.unmachinable_corners:
-        messages.append(f'{report.unmachinable_corners} cut cells had corners incompatible with the specified cutter.')
+        messages.append(f'{report.unmachinable_corners} pocket cells have unrounded corners; '
+                        'inspect cutter feasibility.')
+    if report.inaccessible_pockets:
+        messages.append(f'{report.inaccessible_pockets} sampled pocket islands cannot '
+                        'contain the specified cutter diameter.')
     if report.narrow_web_count:
-        messages.append(f'{report.narrow_web_count} sampled minimum-web violations (red preview outlines).')
+        messages.append(f'{report.narrow_web_count} sampled material-web/clearance '
+                        'violations against rib width and boundary settings (red outlines).')
     if messages:
         field=inputs.itemById('warnings')
         if field.text=='No geometric warnings.':field.text=''
@@ -625,8 +605,6 @@ def _advisory_field_errors(s):
     if pitch <= 0: flag('pitch')
     if rib <= 0: flag('rib')
     if pitch > 0 and rib >= pitch/geometry.SQRT3: flag('pitch','rib')
-    if pitch>0 and max(rib,s.get('min_web',0.))>=pitch/geometry.SQRT3:
-        flag('pitch','rib','min_web')
     if pitch > geometry.SQRT3 * rib and radius > 0:
         maximum = (pitch-geometry.SQRT3*rib)/(2*geometry.SQRT3)
         if radius >= maximum: flag('corner')
@@ -634,10 +612,9 @@ def _advisory_field_errors(s):
     if s['perimeter'] < 0: flag('perimeter')
     if s['holeclear'] < 0: flag('holeclear')
     if radius < 0: flag('corner')
-    for key in ('tool_diameter','min_web','min_pocket','stock_thickness','min_skin'):
-        if s.get(key,0.)<0:flag(key)
-    if s.get('stock_thickness',0.)>0 and s['depth']+s.get('min_skin',0.)>s['stock_thickness']:
-        flag('depth','stock_thickness','min_skin')
+    if s.get('tool_diameter',0.)<0:flag('tool_diameter')
+    if s.get('tool_diameter',0.)>0 and radius<s['tool_diameter']/2:
+        flag('corner','tool_diameter')
     if not 0 <= s['minfraction'] <= 100: flag('minfraction')
     return issues
 
@@ -777,9 +754,8 @@ def _source_geometry(inputs, cache=None):
 def _compute(inputs,max_cells=1600,source_cache=None):
     face,profile,frame,s,regions,origin,rotation=_source_geometry(inputs,source_cache)
     _validate_settings(s)
-    rib,margin,clearance,corner=manufacturability.effective(s)
-    outlines=geometry.make_pockets(regions,s['pitch'],rib,margin,
-        clearance,s['dx'],s['dy'],rotation,corner,
+    outlines=geometry.make_pockets(regions,s['pitch'],s['rib'],s['perimeter'],
+        s['holeclear'],s['dx'],s['dy'],rotation,s['corner'],
         s['minfraction']/100,max_cells=max_cells,
         vertex_hole_diameter=s['nodehole'],base_origin=origin,
         anchor='triangle' if s['anchor']=='Triangle centre' else 'vertex',
@@ -809,8 +785,10 @@ def _draw_preview(session,data):
     obj=graphics.addLines(adsk.fusion.CustomGraphicsCoordinates.create(coords),[],False)
     obj.weight=2
     obj.color=adsk.fusion.CustomGraphicsSolidColorEffect.create(adsk.core.Color.create(12,171,235,255))
-    # Geometry stays native; red highlights only flag sampled clearance checks.
-    violations=getattr(getattr(session,'manufacturing_report',None),'web_shapes',())
+    # Non-destructive highlighting of sampled clearance and cutter advisories.
+    report=getattr(session,'manufacturing_report',None)
+    violations=set(getattr(report,'web_shapes',()))
+    violations.update(getattr(report,'cutter_shapes',()))
     if violations:
         flagged=[]
         for i in violations:
@@ -1049,8 +1027,7 @@ class Session:
         geom_s=((k,v) for k,v in s.items()
                 if k not in ('depth','depth_expression'))
         signature=(source_key,tuple(sorted(geom_s)),origin,rotation)
-        _,margin,clearance,_=manufacturability.effective(s)
-        prep_key=(source_key,margin,clearance,s['backend'])
+        prep_key=(source_key,s['perimeter'],s['holeclear'],s['backend'])
         payload={'regions':regions, 'settings':s.copy(), 'origin':origin,
                  'rotation':rotation, 'anchor':anchor,'prep_key':prep_key}
         return signature,(face,profile,frame,s,regions),payload
@@ -1319,12 +1296,8 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
                 'angle':('Grid rotation','0 deg','deg'),
                 'corner':('Pocket corner radius','1.5 mm','mm'),
                 'nodehole':('Vertex hole diameter (0 = off)','3 mm','mm'),
-                'minfraction':('Minimum pocket area (%)','5',''),
+                'minfraction':('Minimum retained cell area (%)','5',''),
                 'tool_diameter':('Cutter diameter (0 = off)','0 mm','mm'),
-                'min_web':('Minimum material web (0 = off)','0 mm','mm'),
-                'min_pocket':('Minimum usable pocket diameter (0 = off)','0 mm','mm'),
-                'stock_thickness':('Material thickness, if uniform','0 mm','mm'),
-                'min_skin':('Minimum remaining skin (0 = off)','0 mm','mm'),
             }
             for key,(title,value,units) in defaults.items():
                 if key in ADVISORY_INPUT_UNITS:
