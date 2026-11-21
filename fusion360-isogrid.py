@@ -33,7 +33,7 @@ COMMAND_ID = 'fusion360_isogrid_create'
 COMMAND_NAME = 'fusion360-isogrid'
 # Keep the version in the running Python code, not in the on-disk manifest:
 # the updater replaces that manifest while this old code remains loaded.
-RUNNING_VERSION = '0.8.1'
+RUNNING_VERSION = '0.8.2'
 COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -1335,7 +1335,9 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
             controls.addBoolValueInput('preset_save','Save selected values',False,'',False)
             controls.addBoolValueInput('preset_delete','Delete selected preset',False,'',False)
             fields_group=controls.addGroupCommandInput('preset_fields_group','Values to include when saving')
-            fields_group.isExpanded=False
+            # Fusion prohibits collapsing a nested group without an enable checkbox.
+            # Only the outer Parameter presets group is collapsible.
+            fields_group.isExpanded=True
             for key in presets.FIELDS:
                 fields_group.children.addBoolValueInput('preset_include_'+key,
                     presets.LABELS[key],True,'',False)

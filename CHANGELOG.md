@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.2 — Fix Fusion preset group creation
+
+- Keep the nested preset field-selection group expanded, as required by the Fusion API
+  when it is nested without an enable checkbox. The parent Parameter presets
+  group remains collapsible and initially closed.
+- Add a regression test simulating the API restriction during command construction.
+
 ## 0.8.1 — Authoritative geometry dimensions, diagnostic-only cutter setting
 
 - Retire redundant material thickness, minimum skin, minimum web and minimum
