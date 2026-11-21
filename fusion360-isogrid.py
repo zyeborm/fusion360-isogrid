@@ -984,6 +984,7 @@ def _create_feature(data):
         circles=sketch.sketchCurves.sketchCircles
         sketch.isComputeDeferred=True
         required=set()
+        source_loops={}
         for shape_index,shape in enumerate(outlines):
             # Untrimmed output intentionally includes complete triangles beyond
             # the face. Keep their editable sketch curves, but do not include
@@ -998,27 +999,39 @@ def _create_feature(data):
                 entity=circles.addByCenterRadius(center_pt,radius)
                 if not entity:raise RuntimeError('Unable to create native vertex-hole circle.')
                 owner=f'{shape_index}:0'
-                entity.attributes.add(ATTRIBUTE_GROUP,'sourceLoop',owner)
-                if should_cut:required.add(owner)
+                try:entity.attributes.add(ATTRIBUTE_GROUP,'sourceLoop',owner)
+                except (AttributeError,RuntimeError):pass
+                if should_cut:
+                    required.add(owner)
+                    source_loops[owner]=(geometry.bounds(shape.loops[0]),
+                                         None,[],shape.circle)
                 continue
             loops=shape.curve_loops or [geometry.polyline_curves(p) for p in shape.loops]
+            holes=[loop for loop,poly in zip(loops,shape.loops)
+                   if geometry.area(poly)<0]
             for loop_index,curved_loop in enumerate(loops):
                 owner=f'{shape_index}:{loop_index}'
                 if should_cut and geometry.area(shape.loops[loop_index])>0:
                     required.add(owner)
+                    source_loops[owner]=(geometry.bounds(shape.loops[loop_index]),
+                                         curved_loop,holes,None)
                 for segment in curved_loop:
                     for entity in _write_sketch_segment(sketch,frame,segment):
-                        entity.attributes.add(ATTRIBUTE_GROUP,'sourceLoop',owner)
+                        try:entity.attributes.add(ATTRIBUTE_GROUP,'sourceLoop',owner)
+                        except (AttributeError,RuntimeError):pass
         sketch.isComputeDeferred=False
         # Match Fusion's *actual* closed profiles by the SketchCurve entities
         # that define their outer boundary, rather than approximated point
         # containment (which could silently drop a valid pocket near an edge).
-        profiles=_match_generated_profiles(sketch,required)
+        match_report={}
+        profiles=_match_generated_profiles(sketch,required,frame,source_loops,
+                                           match_report)
         chosen=adsk.core.ObjectCollection.create()
         for item in profiles:chosen.add(item)
-        APP.log('Isogrid cut profiles: generated=%d recognised=%d Fusion_profiles=%d'%(
-            len(required),chosen.count,sketch.profiles.count))
-        if chosen.count==0:raise RuntimeError('Fusion produced no usable pocket profiles.')
+        APP.log('Isogrid cut profile matching: '+str(match_report))
+        if chosen.count==0:
+            raise RuntimeError('Fusion produced no usable pocket profiles; '
+                               'see the profile matching report in Fusion logs.')
         extrudes=component.features.extrudeFeatures
         feature_input=extrudes.createInput(chosen,adsk.fusion.FeatureOperations.CutFeatureOperation)
         distance=adsk.core.ValueInput.createByString(settings['depth_expression'])
@@ -1033,6 +1046,23 @@ def _create_feature(data):
         if not feature:raise RuntimeError('Extrusion cut returned no feature.')
         feature.name='Isogrid · pocket cut'
         sketch.isVisible=False
+        if match_report['missing']:
+            try:
+                feature.attributes.add(ATTRIBUTE_GROUP,'missingContours',
+                    json.dumps(match_report))
+            except Exception:
+                APP.log('Isogrid could not attach the incomplete-profile report.')
+            APP.log('Isogrid incomplete cut: missing generated contour IDs '+
+                    ', '.join(match_report['missing'][:20]))
+            # A partial cut is preferable to silently producing nothing, but
+            # the shortfall must be explicit to the user.
+            try:
+                UI.messageBox(f'Isogrid cut created with {match_report["matched"]} '
+                    f'of {match_report["expected"]} generated contours. '
+                    f'{len(match_report["missing"])} failed to form a selectable '
+                    'Fusion sketch profile. The missing IDs are in the Fusion log.')
+            except Exception:
+                APP.log('Isogrid could not display the incomplete-cut warning.')
         # Keep a record of the choices for inspection/re-use in future builds.
         saved=dict(settings)
         saved['faceToken']=source_face_token
