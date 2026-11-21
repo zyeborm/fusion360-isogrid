@@ -149,7 +149,7 @@ def screen(shapes, regions, settings):
     perimeter=settings['perimeter']
     void=settings['holeclear']
     indexes=set();best=math.inf;violations=0
-    # Normal vertex-hole shapes have a sampled circle in \`loops\`, but preserve
+    # Normal vertex-hole shapes have a sampled circle in `loops`, but preserve
     # native-circle-only shapes supplied by upstream callers or test fixtures.
     loops_by_shape=[s.loops if s.loops else
                     [geometry.circle_polygon(*s.circle)] if s.circle else []
