@@ -33,7 +33,7 @@ COMMAND_ID = 'fusion360_isogrid_create'
 COMMAND_NAME = 'fusion360-isogrid'
 # Keep the version in the running Python code, not in the on-disk manifest:
 # the updater replaces that manifest while this old code remains loaded.
-RUNNING_VERSION = '0.8.5'
+RUNNING_VERSION = '0.8.6'
 COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -877,18 +877,16 @@ def _write_sketch_segment(sketch,frame,segment):
         return [created]
 
     if isinstance(segment,exact_curves.Offset):
-        # A general curve offset is not, in general, an exact rational B-spline.
-        # Approximate only this final sketch representation, with end tangency.
-        created_segments=[]
-        for points in exact_curves.approximate_cubic_beziers(segment,1e-4):
-            nurbs=adsk.core.NurbsCurve3D.createNonRational(
-                [sketch_point(pt) for pt in points],3,
-                [0.,0.,0.,0.,1.,1.,1.,1.],False)
-            created=curves.sketchFixedSplines.addByNurbsCurve(nurbs) if nurbs else None
-            if not created:
-                raise RuntimeError('Unable to create a smooth offset spline.')
-            created_segments.append(created)
-        return created_segments
+        # The exact offset of a generic spline is not a NURBS. Keep the same
+        # tolerance-controlled cubic approximation, but export its contiguous
+        # Bezier spans as ONE multi-span sketch spline, not dozens of entities.
+        points,knots=exact_curves.approximate_cubic_nurbs(segment,1e-4)
+        nurbs=adsk.core.NurbsCurve3D.createNonRational(
+            [sketch_point(pt) for pt in points],3,list(knots),False)
+        created=curves.sketchFixedSplines.addByNurbsCurve(nurbs) if nurbs else None
+        if not created:
+            raise RuntimeError('Unable to create a smooth offset spline.')
+        return [created]
 
     if isinstance(segment,exact_curves.Line):
         created=curves.sketchLines.addByTwoPoints(
