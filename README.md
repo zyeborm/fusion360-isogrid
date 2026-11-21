@@ -10,6 +10,7 @@ A Fusion 360 add-in that applies an **isogrid pattern** to a planar face of an e
 - **Placement:** X/Y offsets, rotation, origin point and edge alignment.
 - **Optional Auto Fit:** Search pitch, phase and optional rotation for clean, integer-like lattice fits across irregular boundaries. The best fit is selected first; maximum material removal remains a separate candidate. Manual controls remain available. The search scores a margin-aware raster approximation rather than repeatedly constructing exact cut geometry; the selected layout uses the full native-curve clipping engine for preview and extrusion. Fit metrics are estimates until the selected preview completes.
 - **Interactive preview** with working/ready status and advisory geometry warnings that leave OK enabled.
+- **Cut-profile recovery:** Native sketch-curve ownership identifies Fusion profiles; exact-curve containment provides a fallback when sketch recomputation loses curve association. Missing profiles are reported while valid cut profiles can still be extruded.
 - **Manufacturability diagnostics:** The existing rib width, perimeter and void clearances are checked against finished sampled contours. An optional cutter diameter (0 = off) adds tool-radius and cutter-access checks. Violations are highlighted in red, without altering or omitting pocket geometry.
 - **Sparse named parameter presets:** expand **Parameter presets**, tick any combination of numeric expressions, switches, grid anchor, or fit effort, and save a user-defined name. Applying a preset changes only those selected values; other active settings and the selected face remain untouched. Edited parameters are preselected for saving unless manually excluded. Presets preserve expression text and are saved per user as JSON outside the installed add-in.
 - **Trim to boundary** is on by default; turn it off to generate complete triangles and circles for manual trimming.
@@ -40,7 +41,9 @@ below its area threshold during the normal geometry-generation step.
   radius larger than the requested pocket corner radius produces an advisory.
 
 These checks **never modify the requested rib width, corner radius or margins**
-and **never suppress pockets**. They use polygonal samples for diagnostics,
+and the cutter setting **never suppresses pockets**. A separate geometry rule
+omits clipped islands that cannot retain the requested corner radius even
+after repair; their count appears in the dialog. Diagnostics use sampled geometry,
 not a complete CNC toolpath-accessibility proof. The output remains a normal,
 manually editable Fusion sketch and extrusion cut.
 
@@ -70,7 +73,7 @@ The command title displays the **currently running version** (for example, `fusi
 4. Position the grid manually or click **Find Fits** to choose a suggested layout. You can adjust that choice afterwards.
 5. Inspect the preview and click **OK** to create the sketch and cut.
 
-Every pocket uses the same extrusion depth. Existing holes are exclusion areas while boundary trimming is enabled. When two fillets compete for space, the engine removes the interfering narrow tip using exact circular geometry and retains the specified radius. If even this cannot fit, the original pocket is retained with an advisory warning for manual review.
+Every pocket uses the same extrusion depth. Existing holes are exclusion areas while boundary trimming is enabled. When two fillets compete for space, the engine attempts to remove the interfering narrow tip using exact circular geometry while retaining the specified radius. If even this cannot fit, the infeasible pocket island is omitted from both preview and cut, with a count reported to the user.
 
 **Current scope:** Planar faces. Face and sketch boundaries can use lines,
 circles, circular arcs, ellipses, elliptical arcs, rational and nonrational
