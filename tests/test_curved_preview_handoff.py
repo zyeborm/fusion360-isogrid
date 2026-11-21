@@ -90,7 +90,8 @@ class FullPreviewHandoffTests(unittest.TestCase):
                 self.assertEqual(len(session.cache[-1]),137)
                 self.assertEqual(sum(s.circle is not None for s in session.cache[-1]),36)
                 self.assertEqual(events,['executePreview','viewport.refresh'])
-                self.assertEqual(len(drawn),1)
+                # Blue shape contours plus optional red web diagnostics.
+                self.assertIn(len(drawn),(1,2))
                 self.assertGreater(len(drawn[0][0]),1000)
                 self.assertEqual(len(drawn[0][0])%6,0)
                 self.assertEqual(drawn[0][1].weight,2)
