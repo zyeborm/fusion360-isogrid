@@ -33,7 +33,7 @@ COMMAND_ID = 'fusion360_isogrid_create'
 COMMAND_NAME = 'fusion360-isogrid'
 # Keep the version in the running Python code, not in the on-disk manifest:
 # the updater replaces that manifest while this old code remains loaded.
-RUNNING_VERSION = '0.8.2'
+RUNNING_VERSION = '0.8.3'
 COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -829,7 +829,7 @@ def _write_sketch_segment(sketch,frame,segment):
                 sketch_point(segment.end))
         if not created:
             raise RuntimeError('Unable to create a native circular sketch curve.')
-        return
+        return [created]
 
     if isinstance(segment,exact_curves.Ellipse):
         if abs(segment.sweep)>=math.tau-1e-7:
@@ -839,41 +839,105 @@ def _write_sketch_segment(sketch,frame,segment):
                 sketch_point(exact_curves.add(segment.center,segment.minor)))
             if not created:
                 raise RuntimeError('Unable to create a native ellipse.')
+            return [created]
         else:
+            created_segments=[]
             for points,weights in exact_curves.ellipse_quadratics(segment):
                 nurbs=adsk.core.NurbsCurve3D.createRational(
                     [frame.to_world(pt) for pt in points],2,
                     [0.,0.,0.,1.,1.,1.],list(weights),False)
-                if not nurbs or not curves.sketchFixedSplines.addByNurbsCurve(nurbs):
+                created=curves.sketchFixedSplines.addByNurbsCurve(nurbs) if nurbs else None
+                if not created:
                     raise RuntimeError('Unable to create a rational conic spline.')
-        return
+                created_segments.append(created)
+        return created_segments
 
     if isinstance(segment,exact_curves.Nurbs):
         exact=exact_curves.trimmed_nurbs(segment)
         nurbs=adsk.core.NurbsCurve3D.createRational(
             [frame.to_world(pt) for pt in exact.controls],exact.degree,
             list(exact.knots),list(exact.weights),False)
-        if not nurbs or not curves.sketchFixedSplines.addByNurbsCurve(nurbs):
+        created=curves.sketchFixedSplines.addByNurbsCurve(nurbs) if nurbs else None
+        if not created:
             raise RuntimeError('Unable to create a native NURBS sketch curve.')
-        return
+        return [created]
 
     if isinstance(segment,exact_curves.Offset):
         # A general curve offset is not, in general, an exact rational B-spline.
         # Approximate only this final sketch representation, with end tangency.
+        created_segments=[]
         for points in exact_curves.approximate_cubic_beziers(segment,1e-4):
             nurbs=adsk.core.NurbsCurve3D.createNonRational(
                 [frame.to_world(pt) for pt in points],3,
                 [0.,0.,0.,0.,1.,1.,1.,1.],False)
-            if not nurbs or not curves.sketchFixedSplines.addByNurbsCurve(nurbs):
+            created=curves.sketchFixedSplines.addByNurbsCurve(nurbs) if nurbs else None
+            if not created:
                 raise RuntimeError('Unable to create a smooth offset spline.')
-        return
+            created_segments.append(created)
+        return created_segments
 
     if isinstance(segment,exact_curves.Line):
-        if not curves.sketchLines.addByTwoPoints(
-                sketch_point(segment.start),sketch_point(segment.end)):
+        created=curves.sketchLines.addByTwoPoints(
+                sketch_point(segment.start),sketch_point(segment.end))
+        if not created:
             raise RuntimeError('Unable to create a native sketch line.')
-        return
+        return [created]
     raise TypeError('Unsupported output curve: '+type(segment).__name__)
+
+
+def _match_generated_profiles(sketch, required):
+    """Select cut profiles by their actual Fusion sketch-curve ownership.
+
+    Using an arbitrary Profile.face.pointOnFace coordinate and retesting it
+    against our sampled contours can reject an otherwise valid pocket near a
+    curved boundary. The outer ProfileLoop identifies the real Fusion profile
+    and ProfileCurve.sketchEntity identifies the geometry that generated it.
+
+    Each emitted SketchCurve carries a persistent source-loop attribute.  Do
+    not compare Autodesk entityToken strings: the API explicitly documents
+    that the token for the same entity may change even while it remains valid.
+    Only generated *positive* loops appear in required; a protected hole's
+    outer profile loop therefore cannot select the void interior by mistake.
+    """
+    selected=[]
+    matched=set()
+    unknown=0
+    for index in range(sketch.profiles.count):
+        item=sketch.profiles.item(index)
+        outer_loops=[item.profileLoops.item(j)
+                     for j in range(item.profileLoops.count)
+                     if item.profileLoops.item(j).isOuter]
+        if len(outer_loops)!=1:
+            unknown+=1
+            continue
+        outer=outer_loops[0]
+        owners=[]
+        for j in range(outer.profileCurves.count):
+            entity=outer.profileCurves.item(j).sketchEntity
+            attr=(entity.attributes.itemByName(ATTRIBUTE_GROUP,'sourceLoop')
+                  if entity else None)
+            owners.append(attr.value if attr else None)
+        # Split or coincident contours may cause Fusion to combine unrelated
+        # sketch entities into one profile. Fail rather than cut an unrequested
+        # region or silently drop a generated pocket.
+        if not owners or any(owner is None or owner!=owners[0] for owner in owners):
+            unknown+=1
+            continue
+        owner=owners[0]
+        if owner not in required:
+            continue  # A protected inner hole, not a pocket to cut.
+        selected.append(item)
+        matched.add(owner)
+    missing=required-matched
+    if missing:
+        sample=', '.join(str(v) for v in sorted(missing)[:8])
+        raise RuntimeError(
+            f'Fusion recognised {len(matched)}/{len(required)} generated cut '
+            f'contours as selectable sketch profiles ({sketch.profiles.count} '
+            f'total profiles, {unknown} unrecognised). Missing loop IDs: {sample}. '
+            'The sketch contains an open or merged contour, or Fusion did not '
+            'recognise its intended profile.')
+    return selected
 
 
 def _create_feature(data):
@@ -891,40 +955,41 @@ def _create_feature(data):
         sketch.name='Isogrid · pocket outlines'
         circles=sketch.sketchCurves.sketchCircles
         sketch.isComputeDeferred=True
-        for shape in outlines:
+        required=set()
+        for shape_index,shape in enumerate(outlines):
+            # Untrimmed output intentionally includes complete triangles beyond
+            # the face. Keep their editable sketch curves, but do not include
+            # wholly exterior profiles in the extrusion cut.
+            should_cut=True
+            if not settings['trim_boundary']:
+                fragments=geometry.clip_pocket(shape.outline,regions)
+                should_cut=(sum(geometry.area(poly) for poly in fragments)>1e-8)
             if shape.circle:
                 center,radius=shape.circle
                 center_pt=sketch.modelToSketchSpace(frame.to_world(center))
-                circles.addByCenterRadius(center_pt,radius)
+                entity=circles.addByCenterRadius(center_pt,radius)
+                if not entity:raise RuntimeError('Unable to create native vertex-hole circle.')
+                owner=f'{shape_index}:0'
+                entity.attributes.add(ATTRIBUTE_GROUP,'sourceLoop',owner)
+                if should_cut:required.add(owner)
                 continue
             loops=shape.curve_loops or [geometry.polyline_curves(p) for p in shape.loops]
-            for curved_loop in loops:
+            for loop_index,curved_loop in enumerate(loops):
+                owner=f'{shape_index}:{loop_index}'
+                if should_cut and geometry.area(shape.loops[loop_index])>0:
+                    required.add(owner)
                 for segment in curved_loop:
-                    _write_sketch_segment(sketch,frame,segment)
+                    for entity in _write_sketch_segment(sketch,frame,segment):
+                        entity.attributes.add(ATTRIBUTE_GROUP,'sourceLoop',owner)
         sketch.isComputeDeferred=False
-        # Determine which Fusion profiles correspond to pockets, not protected
-        # islands or the exterior. Their sample point is in sketch coordinates.
-        candidates=[]
-        for shape in outlines:
-            if not settings['trim_boundary']:
-                # Keep the entire cell in the generated sketch, but omit
-                # profiles that have zero intersection with the target face.
-                # Other outside portions remain available for manual trimming.
-                fragments=geometry.clip_pocket(shape.outline,regions)
-                if sum(geometry.area(poly) for poly in fragments)<=1e-8:
-                    continue
-            candidates.append((geometry.bounds(shape.outline),shape.loops))
+        # Match Fusion's *actual* closed profiles by the SketchCurve entities
+        # that define their outer boundary, rather than approximated point
+        # containment (which could silently drop a valid pocket near an edge).
+        profiles=_match_generated_profiles(sketch,required)
         chosen=adsk.core.ObjectCollection.create()
-        for i in range(sketch.profiles.count):
-            item=sketch.profiles.item(i)
-            in_sketch=item.face.pointOnFace
-            xy=frame.to_xy(sketch.sketchToModelSpace(in_sketch))
-            if settings['trim_boundary'] and not all(region.contains(xy) for region in regions):continue
-            if any(geometry.boxes_overlap(box,(xy[0],xy[1],xy[0],xy[1])) and
-                   sum(1 if geometry.area(loop)>0 else -1
-                       for loop in loops if geometry.in_poly(xy,loop,False))>0
-                   for box,loops in candidates):
-                chosen.add(item)
+        for item in profiles:chosen.add(item)
+        APP.log('Isogrid cut profiles: generated=%d recognised=%d Fusion_profiles=%d'%(
+            len(required),chosen.count,sketch.profiles.count))
         if chosen.count==0:raise RuntimeError('Fusion produced no usable pocket profiles.')
         extrudes=component.features.extrudeFeatures
         feature_input=extrudes.createInput(chosen,adsk.fusion.FeatureOperations.CutFeatureOperation)
