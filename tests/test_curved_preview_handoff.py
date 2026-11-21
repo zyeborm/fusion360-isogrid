@@ -87,8 +87,9 @@ class FullPreviewHandoffTests(unittest.TestCase):
                 self.assertTrue(signalled.wait(20),'No worker completion event')
                 session.consume()
                 self.assertIsNone(session.pending_kind)
-                self.assertEqual(len(session.cache[-1]),137)
+                self.assertEqual(len(session.cache[-1]),131)
                 self.assertEqual(sum(s.circle is not None for s in session.cache[-1]),36)
+                self.assertEqual(session.manufacturing_report.rejected_corner_pockets,6)
                 self.assertEqual(events,['executePreview','viewport.refresh'])
                 # Blue shape contours plus optional red web diagnostics.
                 self.assertIn(len(drawn),(1,2))
