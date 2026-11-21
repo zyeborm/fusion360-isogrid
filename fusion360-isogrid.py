@@ -33,7 +33,7 @@ COMMAND_ID = 'fusion360_isogrid_create'
 COMMAND_NAME = 'fusion360-isogrid'
 # Keep the version in the running Python code, not in the on-disk manifest:
 # the updater replaces that manifest while this old code remains loaded.
-RUNNING_VERSION = '0.8.3'
+RUNNING_VERSION = '0.8.4'
 COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -579,6 +579,10 @@ def _show_warnings(inputs, s, outlines=None):
 def _show_manufacturing_report(inputs,report):
     if report is None:return
     messages=[]
+    if report.rejected_corner_pockets:
+        messages.append(f'{report.rejected_corner_pockets} clipped cut islands omitted: '
+                        'the specified corner radius does not fit. '
+                        'They are excluded from both preview and cut.')
     if report.unmachinable_corners:
         messages.append(f'{report.unmachinable_corners} pocket cells have unrounded corners; '
                         'inspect cutter feasibility.')
@@ -885,7 +889,8 @@ def _write_sketch_segment(sketch,frame,segment):
     raise TypeError('Unsupported output curve: '+type(segment).__name__)
 
 
-def _match_generated_profiles(sketch, required):
+def _match_generated_profiles(sketch, required, frame=None, sources=None,
+                              report=None):
     """Select cut profiles by their actual Fusion sketch-curve ownership.
 
     Using an arbitrary Profile.face.pointOnFace coordinate and retesting it
@@ -902,6 +907,7 @@ def _match_generated_profiles(sketch, required):
     selected=[]
     matched=set()
     unknown=0
+    fallback_matches=0
     for index in range(sketch.profiles.count):
         item=sketch.profiles.item(index)
         outer_loops=[item.profileLoops.item(j)
@@ -914,29 +920,51 @@ def _match_generated_profiles(sketch, required):
         owners=[]
         for j in range(outer.profileCurves.count):
             entity=outer.profileCurves.item(j).sketchEntity
-            attr=(entity.attributes.itemByName(ATTRIBUTE_GROUP,'sourceLoop')
-                  if entity else None)
+            try:
+                attr=(entity.attributes.itemByName(ATTRIBUTE_GROUP,'sourceLoop')
+                      if entity else None)
+            except (AttributeError,RuntimeError):
+                attr=None
             owners.append(attr.value if attr else None)
-        # Split or coincident contours may cause Fusion to combine unrelated
-        # sketch entities into one profile. Fail rather than cut an unrequested
-        # region or silently drop a generated pocket.
-        if not owners or any(owner is None or owner!=owners[0] for owner in owners):
+        owner=(owners[0] if owners and owners[0] in required and
+               all(o==owners[0] for o in owners) else None)
+        if owner is None and frame is not None and sources:
+            # Fusion may split/rebuild a SketchCurve when computing sketch
+            # profiles; the ProfileCurve.sketchEntity association can then be
+            # absent or differ from the originally tagged sketch entity.
+            # Check the actual native output curves at Fusion's interior
+            # profile point. Bounding boxes only cull candidate checks; they
+            # are NOT the sampled-polygon containment test used before v0.8.3.
+            try:
+                point=frame.to_xy(sketch.sketchToModelSpace(item.face.pointOnFace))
+                candidates=[]
+                for key,(bbox,curve_loop,holes,circle) in sources.items():
+                    if (bbox[0]-1e-6 <= point[0] <= bbox[2]+1e-6 and
+                        bbox[1]-1e-6 <= point[1] <= bbox[3]+1e-6):
+                        inside=(math.hypot(point[0]-circle[0][0],
+                                           point[1]-circle[0][1]) < circle[1]
+                                if circle else exact_curves.loop_contains(curve_loop,point))
+                        if inside and not any(exact_curves.loop_contains(h,point)
+                                              for h in holes):
+                            candidates.append(key)
+                if len(candidates)==1:
+                    owner=candidates[0]
+                    fallback_matches+=1
+            except (AttributeError,RuntimeError,ValueError,ZeroDivisionError):
+                pass
+        if owner is None:
             unknown+=1
             continue
-        owner=owners[0]
         if owner not in required:
             continue  # A protected inner hole, not a pocket to cut.
         selected.append(item)
         matched.add(owner)
     missing=required-matched
-    if missing:
-        sample=', '.join(str(v) for v in sorted(missing)[:8])
-        raise RuntimeError(
-            f'Fusion recognised {len(matched)}/{len(required)} generated cut '
-            f'contours as selectable sketch profiles ({sketch.profiles.count} '
-            f'total profiles, {unknown} unrecognised). Missing loop IDs: {sample}. '
-            'The sketch contains an open or merged contour, or Fusion did not '
-            'recognise its intended profile.')
+    if report is not None:
+        report.update(expected=len(required),matched=len(matched),
+                      missing=sorted(missing),unknown=unknown,
+                      fallback=fallback_matches,
+                      fusion_profiles=sketch.profiles.count)
     return selected
 
 
