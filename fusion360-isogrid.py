@@ -33,7 +33,7 @@ COMMAND_ID = 'fusion360_isogrid_create'
 COMMAND_NAME = 'fusion360-isogrid'
 # Keep the version in the running Python code, not in the on-disk manifest:
 # the updater replaces that manifest while this old code remains loaded.
-RUNNING_VERSION = '0.8.4'
+RUNNING_VERSION = '0.8.5'
 COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -777,13 +777,23 @@ def _draw_preview(session,data):
     component=face.body.parentComponent
     graphics=component.customGraphicsGroups.add()
     session.graphics=graphics
-    coords=[]
-    for shape in outlines:
-        for poly in shape.loops:
-            for a,b in zip(poly,poly[1:]+poly[:1]):
-                for uv in (a,b):
-                    pt=frame.to_world(uv,lift=0.006)
-                    coords.extend([pt.x,pt.y,pt.z])
+    # Fusion can invoke executePreview repeatedly with unchanged geometry,
+    # particularly while an Auto Fit progress label is being updated. The
+    # previous implementation retransformed ~12,000 vertices on *every*
+    # redraw. Retain the coordinate array for this exact immutable result;
+    # Fusion may roll back its graphics group without invalidating the data.
+    if getattr(session,'_preview_coords_source',None) is outlines:
+        coords=session._preview_coords
+    else:
+        coords=[]
+        for shape in outlines:
+            for poly in shape.loops:
+                for a,b in zip(poly,poly[1:]+poly[:1]):
+                    for uv in (a,b):
+                        pt=frame.to_world(uv,lift=0.006)
+                        coords.extend((pt.x,pt.y,pt.z))
+        session._preview_coords_source=outlines
+        session._preview_coords=coords
     preview_timing.log('fusion.draw_coordinates', elapsed=time.perf_counter()-started, vertices=len(coords)//3)
     if not coords:return
     obj=graphics.addLines(adsk.fusion.CustomGraphicsCoordinates.create(coords),[],False)
@@ -848,7 +858,7 @@ def _write_sketch_segment(sketch,frame,segment):
             created_segments=[]
             for points,weights in exact_curves.ellipse_quadratics(segment):
                 nurbs=adsk.core.NurbsCurve3D.createRational(
-                    [frame.to_world(pt) for pt in points],2,
+                    [sketch_point(pt) for pt in points],2,
                     [0.,0.,0.,1.,1.,1.],list(weights),False)
                 created=curves.sketchFixedSplines.addByNurbsCurve(nurbs) if nurbs else None
                 if not created:
@@ -859,7 +869,7 @@ def _write_sketch_segment(sketch,frame,segment):
     if isinstance(segment,exact_curves.Nurbs):
         exact=exact_curves.trimmed_nurbs(segment)
         nurbs=adsk.core.NurbsCurve3D.createRational(
-            [frame.to_world(pt) for pt in exact.controls],exact.degree,
+            [sketch_point(pt) for pt in exact.controls],exact.degree,
             list(exact.knots),list(exact.weights),False)
         created=curves.sketchFixedSplines.addByNurbsCurve(nurbs) if nurbs else None
         if not created:
@@ -872,7 +882,7 @@ def _write_sketch_segment(sketch,frame,segment):
         created_segments=[]
         for points in exact_curves.approximate_cubic_beziers(segment,1e-4):
             nurbs=adsk.core.NurbsCurve3D.createNonRational(
-                [frame.to_world(pt) for pt in points],3,
+                [sketch_point(pt) for pt in points],3,
                 [0.,0.,0.,0.,1.,1.,1.,1.],False)
             created=curves.sketchFixedSplines.addByNurbsCurve(nurbs) if nurbs else None
             if not created:
