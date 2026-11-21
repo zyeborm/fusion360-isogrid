@@ -734,11 +734,13 @@ def ellipse_quadratics(seg,max_sweep=math.pi/2):
     return result
 
 
-def approximate_cubic_beziers(seg,tolerance=1e-4,max_depth=12):
-    """Tangent-preserving NURBS output for non-NURBS offset curves.
+def _approximate_cubic_bezier_spans(seg,tolerance=1e-4,max_depth=12):
+    """Approximate a parametric offset by cubic spans with original domains.
 
     The original parametric curve is retained by the clipping engine. Only a
-    final, non-algebraic offset is converted to C1 cubic Bezier sketch curves.
+    final, non-algebraic offset is converted to cubic Bezier spans. Each span
+    retains its parameter interval so adjacent spans can be combined into one
+    multi-span NURBS with matching parametric endpoint derivatives.
     The subdivision tolerance is in Fusion centimetres.
     """
     out=[]
@@ -754,9 +756,39 @@ def approximate_cubic_beziers(seg,tolerance=1e-4,max_depth=12):
                   for t in (.2,.4,.6,.8))
         if error>tolerance and depth<max_depth:
             m=(a+b)/2;go(a,m,depth+1);go(m,b,depth+1)
-        else:out.append(ctrl)
+        else:out.append((a,b,ctrl))
     go(0.,1.,0)
     return out
+
+
+def approximate_cubic_beziers(seg,tolerance=1e-4,max_depth=12):
+    """Return the individual cubic Bezier controls (legacy/test interface)."""
+    return [ctrl for _,_,ctrl in _approximate_cubic_bezier_spans(
+        seg,tolerance,max_depth)]
+
+
+def approximate_cubic_nurbs(seg,tolerance=1e-4,max_depth=12):
+    """Return one degree-3, multi-span NURBS for one offset segment.
+
+    This is exactly the same piecewise cubic approximation formerly exported
+    as many independent sketch splines: no refit, changed tolerance or changed
+    curve geometry. Interior knots have multiplicity 3; the shared endpoint
+    control point is stored once. The knot values are the source parameters,
+    so derivatives on either side of a join agree (C1 by construction).
+    """
+    spans=_approximate_cubic_bezier_spans(seg,tolerance,max_depth)
+    if not spans:raise ValueError('No Bezier spans for offset')
+    controls=list(spans[0][2])
+    knots=[0.]*4
+    for start,end,ctrl in spans[1:]:
+        if not near(controls[-1],ctrl[0],1e-9):
+            raise ValueError('Discontinuous cubic offset approximation')
+        knots.extend((start,)*3)
+        controls.extend(ctrl[1:])
+    knots.extend((1.,)*4)
+    if len(knots)!=len(controls)+4:
+        raise ValueError('Invalid multi-span cubic NURBS dimensions')
+    return tuple(controls),tuple(knots)
 
 
 def trimmed_nurbs(seg):
