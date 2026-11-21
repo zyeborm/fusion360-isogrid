@@ -82,7 +82,9 @@ analytic intersections; ellipse, spline and general offset operations preserve
 parametric curves and use numerical intersection/area calculations as needed.
 The resulting Fusion sketch contains native lines, arcs, ellipses and splines,
 not polygonal approximations of source curves. General spline/ellipse *offsets*
-are approximated as smooth cubic splines only when writing the final sketch.
+are approximated as smooth, multi-span cubic NURBS only when writing the final
+sketch. Each continuous offset section uses a single sketch entity, preserving
+the original tangent-matched cubic approximation and its error tolerance.
 Pure Python; no extra dependencies. The geometry is restricted to planar faces.
 
 ## More information

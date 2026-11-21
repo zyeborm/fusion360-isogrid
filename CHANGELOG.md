@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.8.6 — One native spline per trimmed offset section
+
+- Export the existing tangent-matched cubic approximation of each continuous
+  offset section as a single cubic NURBS with multiple knot spans, instead of
+  one independent Fusion sketch spline for every cubic span.
+- Preserve the exact same cubic controls, source parameter intervals and
+  approximation tolerance (1e-4 cm). No geometry, clipping, layout, fillet
+  or pocket-selection rules are changed.
+- On the supplied curved test fixture, reduce native offset spline entities
+  from 130 to 15 while preserving all 131 generated cut shapes.
+- Verify the combined NURBS against the individual cubic spans at sampled
+  parameters, test join derivative continuity, and check sketch-space export.
+- Native Fusion and downstream CAM interpretation require an in-app test.
+
 ## 0.8.5 — Correct native boundary splines and accelerate repeated redraws
 
 - Convert NURBS, elliptical-arc and offset-cubic control points from the
