@@ -132,6 +132,16 @@ class ManufacturingTests(unittest.TestCase):
             rib=.05,perimeter=.2,holeclear=.05))
         self.assertEqual(report.web_shapes,(0,))
 
+    def test_sampled_boundary_tolerance_avoids_false_positives(self):
+        # Source and output splines have independent polygonal approximations.
+        # Their few-micron chord differences are not real design violations.
+        region=geometry.Region([(square(0,0,10,10),True)])
+        settings=dict(rib=.1,perimeter=.3,holeclear=.3,tool_diameter=0.)
+        _,near=m.screen([cut(.299,2.,1.,3.)],[region],settings)
+        self.assertEqual(near.narrow_web_count,0)
+        _,genuine=m.screen([cut(.28,2.,1.,3.)],[region],settings)
+        self.assertGreater(genuine.narrow_web_count,0)
+
     def test_void_clearance_is_independent_of_rib_width(self):
         shapes=[cut(3.7,4.5,3.85,5.5)]
         region=geometry.Region([(square(0,0,10,10),True),
