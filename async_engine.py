@@ -7,6 +7,7 @@ Fusion API access, including UI updates, stays on Fusion's main thread.
 import threading
 import traceback
 import time
+from dataclasses import replace
 import preview_timing
 import manufacturability
 
@@ -117,17 +118,21 @@ class LatestWorker:
         if cancel.is_set():
             raise Cancelled()
         s = payload['settings']
+        rejected=[]
         shapes = geometry.make_pockets(
             payload['regions'], s['pitch'],s['rib'],s['perimeter'],
             s['holeclear'], s['dx'], s['dy'], payload['rotation'],
             s['corner'], s['minfraction']/100, max_cells=1600,
             vertex_hole_diameter=s['nodehole'],
             base_origin=payload['origin'], anchor=payload['anchor'],
-            prepared=prepared,trim_boundary=s.get('trim_boundary',True))
+            prepared=prepared,trim_boundary=s.get('trim_boundary',True),
+            rejected=rejected)
         preview_timing.log('worker.pockets_complete', elapsed=time.perf_counter()-started, shapes=len(shapes))
         if cancel.is_set():
             raise Cancelled()
         shapes,report=manufacturability.screen(shapes,payload['regions'],s)
+        if rejected:
+            report=replace(report,rejected_corner_pockets=len(rejected))
         self._last_manufacturing_report=report
         if not shapes:
             raise ValueError('No pockets fit this region. Reduce margins or cell pitch.')
