@@ -9,6 +9,11 @@ import heapq
 import math
 import geometry
 
+# The source B-rep and final cut curves are tessellated independently for the
+# visual/diagnostic check. Differences of 0.01-0.03 mm along a spline boundary
+# are within that chord approximation and should not turn whole rows red.
+SAMPLED_CLEARANCE_TOLERANCE_CM = 0.003  # 0.03 mm
+
 
 @dataclass(frozen=True)
 class Report:
@@ -18,6 +23,7 @@ class Report:
     web_shapes: tuple = ()  # Original shape indexes for preview highlighting.
     cutter_shapes: tuple = ()
     minimum_web_cm: float | None = None
+    rejected_corner_pockets: int = 0
 
 
 def _segment_distance(a,b,c,d):
@@ -116,7 +122,11 @@ def _closest_loops(a,b,limit):
                     if not geometry.boxes_overlap(b0,b1,limit):continue
                     dist=_segment_distance(x,y,u,v)
                     if dist<best:best=dist
-                    if best<limit:return best
+                    # Stop only when there is a *real* violation. Returning as
+                    # soon as any segment is nominally inside `limit` can hide
+                    # a much closer segment later in the same pocket.
+                    if best < limit-SAMPLED_CLEARANCE_TOLERANCE_CM:
+                        return best
     return best
 
 
@@ -163,7 +173,7 @@ def screen(shapes, regions, settings):
             if boxes[j] is None or not geometry.boxes_overlap(boxes[i],boxes[j],rib):continue
             dist=_closest_loops(loops_by_shape[i],loops_by_shape[j],rib)
             best=min(best,dist)
-            if dist+2e-5<rib:  # Sampling tolerance: 0.0002 mm.
+            if dist+SAMPLED_CLEARANCE_TOLERANCE_CM<rib:
                 indexes.update((i,j));violations+=1
         # Preserve independently entered perimeter / cutout clearances.
         for region in regions:
@@ -173,7 +183,7 @@ def screen(shapes, regions, settings):
                 if not geometry.boxes_overlap(boxes[i],geometry.bounds(boundary),clearance):continue
                 dist=_closest_loops(loops_by_shape[i],[boundary],clearance)
                 best=min(best,dist)
-                if dist+2e-5<clearance:
+                if dist+SAMPLED_CLEARANCE_TOLERANCE_CM<clearance:
                     indexes.add(i);violations+=1
     return shapes,Report(unmachinable_corners=sharp,
                       inaccessible_pockets=blocked,
