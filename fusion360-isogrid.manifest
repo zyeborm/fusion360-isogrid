@@ -6,7 +6,7 @@
   "description": {
     "": "Planar isogrid finishing feature with automatic fitting and pure-Python geometry."
   },
-  "version": "0.8.3",
+  "version": "0.8.4",
   "runOnStartup": false,
   "supportedOS": "windows|mac"
 }
