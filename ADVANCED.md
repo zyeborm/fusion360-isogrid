@@ -41,7 +41,7 @@ General spline-based Auto Fit evaluations take longer than line/arc geometry.
 Fusion native sketch output is tested with API mocks and still requires
 in-Fusion validation on representative user geometries.
 
-**Geometric limitation:** Some partial pockets are too small to contain even one circle of the requested milling radius. These cannot be repaired by disk opening. The engine retains them with sharp-corner advisories for manual review rather than changing the selected radius or silently removing the pocket. The Fusion runtime integration has yet to be tested against the supplied B-Rep file in a live design.
+**Geometric limitation:** Some clipped pockets are too narrow to honour the requested corner radius, even after analytic disk-opening repair. These infeasible cut islands are omitted from the preview and the extrusion, and their count is reported. The corner radius remains authoritative and independent of the optional cutter-diameter diagnostic. Native Fusion generation requires in-application verification on the user's B-Rep model.
 
 With trimming disabled, the 2D grid extends across the selected region's bounding extent. Overlapping profiles may need manual correction before machining. In trimmed mode, small fragments and corners unable to accept the full rounding radius are reported as warnings; feasible pocket geometry is preserved.
 
