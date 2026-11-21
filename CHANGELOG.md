@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.8.5 — Correct native boundary splines and accelerate repeated redraws
+
+- Convert NURBS, elliptical-arc and offset-cubic control points from the
+  component model frame to the sketch's local frame before passing them to
+  Fusion's SketchFixedSplines API. Lines and arcs already used this transform;
+  mixed coordinate systems distorted boundary-adjacent pockets and prevented
+  their Fusion sketch profiles from closing.
+- Cache world-space preview line coordinates against the immutable accepted
+  shape list. Repeat executePreview events can recreate Fusion custom graphics
+  without repeating ~12,000 vertex transforms for unchanged geometry.
+- Regression-test curve exports on an offset and rotated sketch frame and
+  verify repeated preview redraws reuse the generated coordinate array.
+- The exact clipping/generation path and requested pocket dimensions remain
+  unchanged. In-Fusion results require a live application test.
+
 ## 0.8.4 — Restore partial cuts, reject impossible fillets and correct preview advisories
 
 - Recover missing Fusion native sketch-curve tags by matching each Fusion
