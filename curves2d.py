@@ -257,6 +257,7 @@ def _derivative(seg,t):
     return mul(sub(seg.point(high),seg.point(low)),1/(high-low))
 
 
+@lru_cache(maxsize=8192)
 def _closest_parameter(seg,p):
     """Closest parameter with bracketed minimisation around neighbouring chords."""
     points=_flatten(seg,1e-3,10)
@@ -517,6 +518,7 @@ def intersections(a,b):
     return out
 
 
+@lru_cache(maxsize=4096)
 def segment_area(seg):
     if isinstance(seg,Line):return cross(seg.start,seg.end)/2
     if isinstance(seg,Ellipse):

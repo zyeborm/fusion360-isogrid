@@ -26,6 +26,7 @@ import update_checker
 import preview_timing
 import manufacturability
 import presets
+import saved_mass
 
 APP = adsk.core.Application.get()
 UI = APP.userInterface
@@ -33,7 +34,7 @@ COMMAND_ID = 'fusion360_isogrid_create'
 COMMAND_NAME = 'fusion360-isogrid'
 # Keep the version in the running Python code, not in the on-disk manifest:
 # the updater replaces that manifest while this old code remains loaded.
-RUNNING_VERSION = '0.8.6'
+RUNNING_VERSION = '0.8.7'
 COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -482,6 +483,13 @@ def _inputs_to_settings(inputs):
     return settings
 
 
+def _selected_density(inputs):
+    item=inputs.itemById('material_density').selectedItem
+    material=item.name if item else 'Aluminium'
+    custom=inputs.itemById('custom_density').value if material=='User' else None
+    return saved_mass.density(material,custom)
+
+
 def _selected(inputs):
     field=inputs.itemById('face')
     if field.selectionCount!=1: raise ValueError('Select one planar face.')
@@ -798,7 +806,8 @@ def _draw_preview(session,data):
     if not coords:return
     obj=graphics.addLines(adsk.fusion.CustomGraphicsCoordinates.create(coords),[],False)
     obj.weight=2
-    obj.color=adsk.fusion.CustomGraphicsSolidColorEffect.create(adsk.core.Color.create(12,171,235,255))
+    obj.color=adsk.fusion.CustomGraphicsSolidColorEffect.create(
+        adsk.core.Color.create(12,171,235,255))
     # Non-destructive highlighting of sampled clearance and cutter advisories.
     report=getattr(session,'manufacturing_report',None)
     violations=set(getattr(report,'web_shapes',()))
@@ -1163,6 +1172,21 @@ class Session:
                  'rotation':rotation, 'anchor':anchor,'prep_key':prep_key}
         return signature,(face,profile,frame,s,regions),payload
 
+    def _saved_text(self,inputs):
+        field=inputs.itemById('saved_result')
+        if field is None:return
+        if self.cache is None:
+            field.text='Waiting for exact geometry…'
+            return
+        try:
+            volume=saved_mass.saved_volume_cm3(
+                self.cache[-1],_input_number(inputs,'depth'))
+            mass=volume*_selected_density(inputs)
+            amount=(f'{mass/1000:.3f} kg' if mass>=1000 else f'{mass:.1f} g')
+            field.text=f'Removed ~{volume:.2f} cm³  ·  Saved ~{amount}'
+        except (ValueError,KeyError) as exc:
+            field.text='Savings: '+str(exc)
+
     def request_preview(self, inputs, force=False):
         started=time.perf_counter()
         if not self.alive or self.updating:
@@ -1190,6 +1214,7 @@ class Session:
                     if not inputs.itemById('show_preview').value:
                         self.clear_preview()
                     _show_manufacturing_report(inputs,self.manufacturing_report)
+                    self._saved_text(inputs)
                 return
             self.failed_signature=None
             self.last_signature=signature
@@ -1205,6 +1230,7 @@ class Session:
             preview_timing.log('fusion.preview_submitted', revision=self.revision, elapsed=time.perf_counter()-started)
             self._activity('working','Computing preview')
             inputs.itemById('status').text='Computing 2D pockets…'
+            self._saved_text(inputs)
         except Exception as error:
             preview_timing.log('fusion.preview_error', elapsed=time.perf_counter()-started, error=str(error))
             self.worker.cancel()
@@ -1256,6 +1282,7 @@ class Session:
         holes=sum(shape.circle is not None for shape in outlines)
         _refresh_field_feedback(inputs,outlines)
         _show_manufacturing_report(inputs,self.manufacturing_report)
+        self._saved_text(inputs)
         inputs.itemById('status').text=(f'{self.fit_summary}'
              f'{len(outlines)-holes} cells · {holes} vertex holes · {total} contours. '
              f'Geometry: {geometry.geometry_backend(_inputs_to_settings(inputs)["backend"])}. '
@@ -1475,6 +1502,13 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
             controls.addTextBoxCommandInput('preset_status','Preset status',
                 'Tick only the values this preset should change.',2,True)
             inputs.addBoolValueInput('show_preview','Show outline preview',True,'',True)
+            dropdown('material_density','Material density',
+                     ('Aluminium','Steel','UHMW','1','User'))
+            custom=inputs.addStringValueInput('custom_density',
+                'Custom density (g/cm³)','1.0')
+            custom.isVisible=False
+            inputs.addTextBoxCommandInput('saved_result','Volume / mass saved',
+                'Waiting for exact geometry…',1,True)
             inputs.addTextBoxCommandInput('activity','Geometry worker',
                 '<span style="color:#888888;"><b>● Idle</b></span> — Select a face',1,True)
             inputs.addTextBoxCommandInput('status','Pattern','Select a planar face to preview.',3,True)
@@ -1630,10 +1664,16 @@ class ChangedHandler(adsk.core.InputChangedEventHandler):
                 selected=inputs.itemById('fit_choice').selectedItem
                 if selected and self.session.fits:
                     self.session.apply_fit(inputs,selected.index)
+            elif changed in ('material_density','custom_density'):
+                selected=inputs.itemById('material_density').selectedItem
+                inputs.itemById('custom_density').isVisible=(
+                    selected is not None and selected.name=='User')
+                self.session._saved_text(inputs)
+                return  # Density changes never invalidate 2D pockets.
             elif changed in ('show_preview',):
                 self.session.request_preview(inputs)
             elif changed not in ('status','activity','warnings','update_notice',
-                                  'check_update','install_update'):
+                                  'check_update','install_update','saved_result'):
                 # Auto Fit bounds/effort are independent of the manual pattern.
                 # Clear stale candidates without disturbing the manual preview.
                 if changed not in ('fit_min_pitch','fit_max_pitch',
