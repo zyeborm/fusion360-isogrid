@@ -1093,8 +1093,9 @@ def make_pockets(regions,pitch,rib,perimeter,void_clearance,offset_x,offset_y,
                  rotation,corner_radius=0,min_area_fraction=0.05,max_cells=2500,
                  vertex_hole_diameter=0,base_origin=None,anchor='vertex',
                  prepared=None, backend='auto', trim_boundary=True,
-                 rejected=None, check_cancel=None):
+                 rejected=None, check_cancel=None, round_pocket=None):
     if not regions:raise ValueError('No selected area.')
+    if round_pocket is None:round_pocket=_exact.rounded_pocket
     if vertex_hole_diameter<0:
         raise ValueError('Vertex hole diameter must be non-negative.')
     # Distance-to-boundary exclusion bands, rather than miter offsets. They
@@ -1143,7 +1144,7 @@ def make_pockets(regions,pitch,rib,perimeter,void_clearance,offset_x,offset_y,
                     continue
                 if signed<=min_area:continue
                 issues=[]
-                curves=_exact.rounded_pocket(raw_loop,corner_radius,issues)
+                curves=round_pocket(raw_loop,corner_radius,issues)
                 fillet_warnings+=len(issues)
                 if issues and corner_radius>0:
                     # If neither the tangent fillets nor the full-radius
