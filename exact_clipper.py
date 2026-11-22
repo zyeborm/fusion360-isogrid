@@ -94,7 +94,8 @@ def _split_edges(edges):
                 yield section
 
 
-def _assemble(directed):
+def _assemble(directed, area_fn=None):
+    if area_fn is None:area_fn=c.loop_area
     outgoing=defaultdict(list)
     for i,seg in enumerate(directed):outgoing[_key(seg.start)].append(i)
     unused=set(range(len(directed)))
@@ -119,7 +120,7 @@ def _assemble(directed):
             # With valid region to the left, take the first CCW successor.
             idx=min(nexts,key=turn)
         if not c.close_loop(path,2e-5):raise ValueError('Clipped exact contour is not closed')
-        if abs(c.loop_area(path))>1e-9:
+        if abs(area_fn(path))>1e-9:
             loops.append(merge_curves(path))
     return loops
 
