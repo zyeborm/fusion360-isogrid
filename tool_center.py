@@ -13,6 +13,8 @@ from shared_boundary import Boundary, sampled_signed_area
 def inset_triangle(tri,r):
     if g.area(tri)<0:tri=list(reversed(tri))
     if r<=0:return tri
+    perimeter=sum(c.length(c.sub(tri[(i+1)%3],tri[i])) for i in range(3))
+    if 2*g.area(tri)/perimeter<=r+1e-9:return []
     return g.offset_valid_side(tri,r)
 
 
