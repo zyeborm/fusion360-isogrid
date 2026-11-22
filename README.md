@@ -8,9 +8,9 @@ A Fusion 360 add-in that applies an **isogrid pattern** to a planar face of an e
 - **Optional sketch boundary** to restrict the patterned area.
 - **Adjustable grid:** Cell pitch, rib width, extrusion depth, corner radius, vertex holes, perimeter and hole clearances. Vertex holes default to 3 mm; **Auto Max Hole** calculates the largest nominal diameter that preserves a rib-width material web around an interior junction.
 - **Placement:** X/Y offsets, rotation, origin point and edge alignment.
-- **Optional Auto Fit:** Search pitch, phase and optional rotation for clean, integer-like lattice fits across irregular boundaries. The best fit is selected first; maximum material removal remains a separate candidate. Manual controls remain available. The search scores a margin-aware raster approximation rather than repeatedly constructing exact cut geometry; the selected layout uses the full native-curve clipping engine for preview and extrusion. Fit metrics are estimates until the selected preview completes.
+- **Optional Auto Fit:** Search pitch, phase and optional rotation for clean, integer-like lattice fits across irregular boundaries. The best fit is selected first; maximum material removal remains a separate candidate. Manual controls remain available. The search scores a margin-aware raster approximation rather than repeatedly constructing exact cut geometry; the selected layout uses the exact same tool-centre contours for preview and extrusion. Fit metrics are estimates until the selected preview completes.
 - **Interactive preview** with working/ready status and advisory geometry warnings that leave OK enabled. Repeated Fusion redraw events reuse the completed line-coordinate buffer instead of transforming the same vertices again.
-- **Faster Auto Fit preview:** Reused exact spline area and closest-point calculations, plus cancellation checkpoints between pockets, reduce delays while retaining a single authoritative preview geometry path.
+- **Fast tool-centre preview:** Inset the plate boundary once, intersect it with eroded triangles, then construct the final rounded pockets directly. The worker reuses the prepared boundary across fit/placement changes. The cut uses the exact contours shown in preview.
 - **Saved volume and mass:** Material density dropdown (aluminium, steel, UHMW, 1 g/cm³, custom), optional custom density entry, and a single line showing estimated removed volume and mass. Estimates use finished pocket contours and cut depth, assuming a constant-depth cut within the solid.
 - **Cut-profile recovery:** Native sketch-curve ownership identifies Fusion profiles; exact-curve containment provides a fallback when sketch recomputation loses curve association. Missing profiles are reported while valid cut profiles can still be extruded.
 - **Manufacturability diagnostics:** The existing rib width, perimeter and void clearances are checked against finished sampled contours. An optional cutter diameter (0 = off) adds tool-radius and cutter-access checks. Violations are highlighted in red, without altering or omitting pocket geometry.
@@ -43,9 +43,8 @@ below its area threshold during the normal geometry-generation step.
   radius larger than the requested pocket corner radius produces an advisory.
 
 These checks **never modify the requested rib width, corner radius or margins**
-and the cutter setting **never suppresses pockets**. A separate geometry rule
-omits clipped islands that cannot retain the requested corner radius even
-after repair; their count appears in the dialog. Diagnostics use sampled geometry,
+and the cutter setting **never suppresses pockets**. The tool-centre geometry incorporates the requested corner radius directly;
+any unsupported offset junctions are skipped and reported as rejected contours. Diagnostics use sampled geometry,
 not a complete CNC toolpath-accessibility proof. The output remains a normal,
 manually editable Fusion sketch and extrusion cut.
 
@@ -75,13 +74,13 @@ The command title displays the **currently running version** (for example, `fusi
 4. Position the grid manually or click **Find Fits** to choose a suggested layout. You can adjust that choice afterwards.
 5. Inspect the preview and click **OK** to create the sketch and cut.
 
-Every pocket uses the same extrusion depth. Existing holes are exclusion areas while boundary trimming is enabled. When two fillets compete for space, the engine attempts to remove the interfering narrow tip using exact circular geometry while retaining the specified radius. If even this cannot fit, the infeasible pocket island is omitted from both preview and cut, with a count reported to the user.
+Every pocket uses the same extrusion depth. Existing holes are exclusion areas while boundary trimming is enabled. Rounded geometry is constructed as a dilation of the feasible tool-centre region; narrow features disappear naturally instead of triggering a subsequent repair operation. Zero-radius and untrimmed patterns retain their existing geometry path.
 
 **Current scope:** Planar faces. Face and sketch boundaries can use lines,
 circles, circular arcs, ellipses, elliptical arcs, rational and nonrational
 NURBS splines (including Fusion conics), and polylines. Lines and circles use
 analytic intersections; ellipse, spline and general offset operations preserve
-parametric curves and use numerical intersection/area calculations as needed.
+parametric curve sections and use numerical intersection tests as needed.
 The resulting Fusion sketch contains native lines, arcs, ellipses and splines,
 not polygonal approximations of source curves. General spline/ellipse *offsets*
 are approximated as smooth, multi-span cubic NURBS only when writing the final
