@@ -118,6 +118,9 @@ class LatestWorker:
         if cancel.is_set():
             raise Cancelled()
         s = payload['settings']
+        def check_cancel():
+            if cancel.is_set():
+                raise Cancelled()
         rejected=[]
         shapes = geometry.make_pockets(
             payload['regions'], s['pitch'],s['rib'],s['perimeter'],
@@ -126,7 +129,7 @@ class LatestWorker:
             vertex_hole_diameter=s['nodehole'],
             base_origin=payload['origin'], anchor=payload['anchor'],
             prepared=prepared,trim_boundary=s.get('trim_boundary',True),
-            rejected=rejected)
+            rejected=rejected,check_cancel=check_cancel)
         preview_timing.log('worker.pockets_complete', elapsed=time.perf_counter()-started, shapes=len(shapes))
         if cancel.is_set():
             raise Cancelled()
