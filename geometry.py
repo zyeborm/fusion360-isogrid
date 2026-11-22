@@ -1057,7 +1057,15 @@ class PreparedGeometry:
         return _clip_prepared_python(pocket,[self._mask_region],
                                      local_edges,([],[]))
 
-    def clip_many(self, pockets):
+    def clip_many(self, pockets, check_cancel=None):
+        # The worker can supersede a running fit preview. Check between cells
+        # rather than completing the entire expensive exact Boolean batch.
+        if check_cancel is not None:
+            results=[]
+            for pocket in pockets:
+                check_cancel()
+                results.append(self.clip(pocket))
+            return results
         if self.exact is not None:return self.exact.clip_many(pockets)
         if self.compiled is not None:
             return self.compiled.clip_many(pockets)
@@ -1085,7 +1093,7 @@ def make_pockets(regions,pitch,rib,perimeter,void_clearance,offset_x,offset_y,
                  rotation,corner_radius=0,min_area_fraction=0.05,max_cells=2500,
                  vertex_hole_diameter=0,base_origin=None,anchor='vertex',
                  prepared=None, backend='auto', trim_boundary=True,
-                 rejected=None):
+                 rejected=None, check_cancel=None):
     if not regions:raise ValueError('No selected area.')
     if vertex_hole_diameter<0:
         raise ValueError('Vertex hole diameter must be non-negative.')
@@ -1118,9 +1126,10 @@ def make_pockets(regions,pitch,rib,perimeter,void_clearance,offset_x,offset_y,
     pockets=list(lattice_pockets(box,pitch,rib,origin,rotation,0,max_cells))
     if len(pockets)>max_cells:
         raise ValueError(f'Pattern exceeds {max_cells} cells; increase pitch.')
-    clippings=(prepared.clip_many(pockets) if trim_boundary else
+    clippings=(prepared.clip_many(pockets,check_cancel) if trim_boundary else
                [[p] for p in pockets])
     for pocket,clipped in zip(pockets,clippings):
+        if check_cancel is not None:check_cancel()
         if not clipped:continue
         if trim_boundary and prepared.exact is not None:
             # Curves are the source of truth.  Clipping and corner fillets use
