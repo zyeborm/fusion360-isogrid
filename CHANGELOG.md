@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.7 — Saved mass and faster exact previews
+
+- Add a compact material-density selector (aluminium, steel, UHMW, 1 g/cm³,
+  or user-supplied g/cm³), with a volume-removed and mass-saved readout.
+  Estimates use the accepted pocket contours and selected cut depth.
+- Cache exact segment-area integrals and closest-point solutions for immutable
+  spline segments. This avoids thousands of repeated source NURBS evaluations
+  during clipping and radius repair; calculation results remain unchanged.
+- Check cancellation between exact Boolean clips and corner operations so an
+  obsolete selected fit stops promptly instead of delaying the next fit.
+- Retain one authoritative geometry path for both cyan preview and final cut.
+
 ## 0.8.6 — One native spline per trimmed offset section
 
 - Export the existing tangent-matched cubic approximation of each continuous
