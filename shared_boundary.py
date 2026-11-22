@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import geometry as g
 import curves2d as c
 import exact_clipper as exact
+from offset_cleanup import clean_closed_offset
 
 @dataclass(frozen=True)
 class Hit:
@@ -28,7 +29,25 @@ class Boundary:
             raise ValueError('Native curved boundary required for benchmark')
         bb=g.expand_box(g.face_bounds(regions),max(perimeter,void_clearance,1.))
         box=[(bb[0],bb[1]),(bb[2],bb[1]),(bb[2],bb[3]),(bb[0],bb[3])]
-        self.loops=self.prep.exact.clip(box)
+        # For a smooth, single-segment closed outer boundary, the inset can
+        # be constructed directly and self-intersecting lobes removed once.
+        # More complicated connected boundary graphs continue using the old
+        # prepared exact region until general offset-join topology is proven.
+        self.offset_cleaned=False
+        sources=[(loop,outer) for region in regions
+                 for loop,outer in (zip(region.curve_loops, (o for _,o in region.loops))
+                                      if region.curve_loops is not None else [])]
+        if len(sources)==1 and sources[0][1] and len(sources[0][0])==1:
+            source=sources[0][0][0]
+            if isinstance(source,(c.Arc,c.Ellipse,c.Nurbs)) and c.near(source.start,source.end,1e-7):
+                self.loops=clean_closed_offset(source,perimeter,True)
+                self.offset_cleaned=True
+                if not self.loops:
+                    raise ValueError('No permitted region after inward offset')
+            else:
+                self.loops=self.prep.exact.clip(box)
+        else:
+            self.loops=self.prep.exact.clip(box)
         expected_voids=sum(not outer for region in regions for _,outer in region.loops)
         recognised_voids=sum(c.loop_area(loop)<0 for loop in self.loops)
         if recognised_voids<expected_voids:
@@ -40,13 +59,15 @@ class Boundary:
         self.edges=[]
         for loop_idx,loop in enumerate(self.loops):
             for seg in loop:
-                bb=c.bounds(seg)
-                # Narrow the bbox of trimmed curves from their sampled path.
+                # The cleaned offset is a parameter-preserving section of the
+                # original Offset. Its tight bounds come from sampled chords;
+                # c.bounds handles the known native primitive classes only.
                 if not isinstance(seg,(c.Line,c.Arc)):
                     path=c._flatten(seg,flatten_tolerance,15)
                     bb=g.expand_box(g.bounds([p for _,p in path]),flatten_tolerance)
                 else:
                     path=None
+                    bb=c.bounds(seg)
                 self.edges.append((loop_idx,seg,bb,path))
         self._outer=[(poly,positive) for poly,positive in zip(self.polys,
             [c.loop_area(loop)>0 for loop in self.loops])]
