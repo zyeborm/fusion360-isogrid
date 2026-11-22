@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 
 import async_engine
 import geometry
+import tool_center
 
 
 class AsyncEngineTests(unittest.TestCase):
@@ -45,9 +46,9 @@ class AsyncEngineTests(unittest.TestCase):
         payload=self.payload()
         revision=self.worker.submit('preview',payload)
         result=self.receive(revision,'preview')[-1]['value']
-        direct=geometry.make_pockets(payload['regions'], 2,.2,.2,.2,0,0,0,.15,.05,
-                                     vertex_hole_diameter=0,backend='python',
-                                     max_cells=1600)
+        direct,_=tool_center.make_toolcentre_pockets(
+            payload['regions'],2,.2,.2,.2,0,0,0,.15,.05,
+            vertex_hole_diameter=0,max_cells=1600)
         self.assertEqual(result,direct)
 
     def test_latest_result_wins_and_pending_is_coalesced(self):
