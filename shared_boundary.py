@@ -12,6 +12,23 @@ import curves2d as c
 import exact_clipper as exact
 from offset_cleanup import clean_closed_offset
 
+def sampled_signed_area(loop, tolerance=.0002):
+    """Signed Green area from native lines/arcs and bounded chords for splines.
+
+    Used only to classify finished contour topology and minimum cell area;
+    never changes output curve coordinates. Avoids 256 integrand evaluations
+    per trimmed offset section when an exact area integral is unnecessary.
+    """
+    total=0.
+    for seg in loop:
+        if isinstance(seg,(c.Line,c.Arc,c.Ellipse)):
+            total+=c.segment_area(seg)
+        else:
+            chord=c._flatten(seg,tolerance,15)
+            total+=sum(c.cross(a[1],b[1]) for a,b in zip(chord,chord[1:]))/2
+    return total
+
+
 @dataclass(frozen=True)
 class Hit:
     line_t: float
@@ -23,7 +40,8 @@ def _tri_contains(p,poly):
     return g._point_in_ccw_triangle(p,poly)
 
 class Boundary:
-    def __init__(self, regions, perimeter, void_clearance, flatten_tolerance=0.00025):
+    def __init__(self, regions, perimeter, void_clearance, flatten_tolerance=0.00025, allow_merged_voids=False, sampled_area=False):
+        self.sampled_area=sampled_area
         self.prep=g.PreparedGeometry(regions,perimeter,void_clearance)
         if self.prep.exact is None:
             raise ValueError('Native curved boundary required for benchmark')
@@ -51,10 +69,24 @@ class Boundary:
         expected_voids=sum(not outer for region in regions for _,outer in region.loops)
         recognised_voids=sum(c.loop_area(loop)<0 for loop in self.loops)
         if recognised_voids<expected_voids:
-            # Some complex source curve families are not reliably represented
-            # by a single enclosing-rectangle Boolean. Stay on the original
-            # exact clipper instead of silently losing protected islands.
-            raise ValueError('Global prepared boundary lost a protected void')
+            # A growing exclusion can merge with the exterior, changing a
+            # distinct negative loop into a concavity in the outer loop.
+            # Verify every source-void interior is still excluded. The
+            # experimental tool-centre preparation opts into this test;
+            # retain the previous fail-closed behaviour for older callers.
+            if not allow_merged_voids:
+                raise ValueError('Global prepared boundary lost a protected void')
+            for region in regions:
+                for path,outer in zip(region.curve_loops or [],
+                                      (flag for _,flag in region.loops)):
+                    if outer:continue
+                    representative=g.polygon_centroid(c.sample(path,.0004))
+                    contained=any(c.loop_area(out)>0 and c.loop_contains(out,representative)
+                                  for out in self.loops)
+                    protected=any(c.loop_area(out)<0 and c.loop_contains(out,representative)
+                                  for out in self.loops)
+                    if contained and not protected:
+                        raise ValueError('Global prepared boundary lost a protected void')
         self.polys=[c.sample(l,flatten_tolerance) for l in self.loops]
         self.edges=[]
         for loop_idx,loop in enumerate(self.loops):
@@ -189,7 +221,7 @@ class Boundary:
                 piece=seg.section(a,b)
                 if _tri_contains(piece.point(.5),triangle):directed.append(piece)
         if not directed:return []
-        return exact._assemble(directed)
+        return exact._assemble(directed, sampled_signed_area if self.sampled_area else None)
 
 class PreparedDirect(g.PreparedGeometry):
     def __init__(self, regions,perimeter,void_clearance,corner_radius):
