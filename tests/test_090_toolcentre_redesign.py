@@ -44,6 +44,7 @@ class FullToolCentreTests(unittest.TestCase):
         tri=[(0,0),(4,0),(2,2*math.sqrt(3))]
         got=t.inset_triangle(tri,.2)
         self.assertEqual(len(got),3)
+        self.assertEqual(t.inset_triangle(tri,2.),[])
         if Polygon:
             expected=Polygon(tri).buffer(-.2,quad_segs=64,join_style='mitre')
             self.assertLess(Polygon(got).symmetric_difference(expected).area,1e-8)
