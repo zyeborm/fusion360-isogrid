@@ -27,6 +27,8 @@ import preview_timing
 import manufacturability
 import presets
 import saved_mass
+import tool_center
+from offset_cleanup import OffsetInterval
 
 APP = adsk.core.Application.get()
 UI = APP.userInterface
@@ -34,7 +36,7 @@ COMMAND_ID = 'fusion360_isogrid_create'
 COMMAND_NAME = 'fusion360-isogrid'
 # Keep the version in the running Python code, not in the on-disk manifest:
 # the updater replaces that manifest while this old code remains loaded.
-RUNNING_VERSION = '0.8.7'
+RUNNING_VERSION = '0.8.8'
 COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -766,12 +768,16 @@ def _source_geometry(inputs, cache=None):
 def _compute(inputs,max_cells=1600,source_cache=None):
     face,profile,frame,s,regions,origin,rotation=_source_geometry(inputs,source_cache)
     _validate_settings(s)
-    outlines=geometry.make_pockets(regions,s['pitch'],s['rib'],s['perimeter'],
-        s['holeclear'],s['dx'],s['dy'],rotation,s['corner'],
-        s['minfraction']/100,max_cells=max_cells,
-        vertex_hole_diameter=s['nodehole'],base_origin=origin,
-        anchor='triangle' if s['anchor']=='Triangle centre' else 'vertex',
-        backend=s['backend'],trim_boundary=s['trim_boundary'])
+    arguments=(regions,s['pitch'],s['rib'],s['perimeter'],s['holeclear'],
+               s['dx'],s['dy'],rotation,s['corner'])
+    options=dict(min_area_fraction=s['minfraction']/100,max_cells=max_cells,
+                 vertex_hole_diameter=s['nodehole'],base_origin=origin,
+                 anchor='triangle' if s['anchor']=='Triangle centre' else 'vertex')
+    if s['trim_boundary'] and s['corner']>0 and s['backend']!='geos':
+        outlines,_=tool_center.make_toolcentre_pockets(*arguments,**options)
+    else:
+        outlines=geometry.make_pockets(*arguments,backend=s['backend'],
+            trim_boundary=s['trim_boundary'],**options)
     outlines,_=manufacturability.screen(outlines,regions,s)
     if not outlines:raise ValueError('No pockets fit this region. Reduce margins or cell pitch.')
     return face,profile,frame,s,regions,outlines
@@ -885,10 +891,26 @@ def _write_sketch_segment(sketch,frame,segment):
             raise RuntimeError('Unable to create a native NURBS sketch curve.')
         return [created]
 
-    if isinstance(segment,exact_curves.Offset):
-        # The exact offset of a generic spline is not a NURBS. Keep the same
-        # tolerance-controlled cubic approximation, but export its contiguous
-        # Bezier spans as ONE multi-span sketch spline, not dozens of entities.
+    if isinstance(segment,(exact_curves.Offset,OffsetInterval)):
+        # Preserve primitives when an offset remains an exact line or circle.
+        # Cleaned offset intervals must use the original parameterisation;
+        # sectioning the base before offsetting can move its spline endpoints.
+        underlying=(segment.source if isinstance(segment,OffsetInterval)
+                    else segment)
+        if isinstance(underlying.base,exact_curves.Line):
+            return _write_sketch_segment(sketch,frame,
+                exact_curves.Line(segment.start,segment.end))
+        if isinstance(underlying.base,exact_curves.Arc):
+            arc=underlying.base
+            sweep=(arc.sweep*(segment.u1-segment.u0)
+                   if isinstance(segment,OffsetInterval) else arc.sweep)
+            radius=exact_curves.length(exact_curves.sub(segment.start,arc.center))
+            if radius>1e-9:
+                return _write_sketch_segment(sketch,frame,
+                    exact_curves.Arc(arc.center,segment.start,segment.end,sweep))
+        # Generic spline/ellipse offsets remain one bounded-error multi-span
+        # NURBS per retained section. This also handles cleaned parametric
+        # intervals from self-intersecting source offsets.
         points,knots=exact_curves.approximate_cubic_nurbs(segment,1e-4)
         nurbs=adsk.core.NurbsCurve3D.createNonRational(
             [sketch_point(pt) for pt in points],3,list(knots),False)
