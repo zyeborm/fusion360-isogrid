@@ -4,13 +4,7 @@ A Fusion 360 add-in that cuts an isogrid pattern into a planar face. It previews
 
 ## Quick start
 
-1. Open **Solid → Add-Ins → fusion360-isogrid**.
-2. Select a **Target face**. Optionally select a sketch profile under **Optional sketch boundary** to limit the patterned area.
-3. Set **Auto Fit minimum pitch** and **Auto Fit maximum pitch** to a sensible range for the part.
-4. Click **Find Fits**. Inspect the preview and try the suggested **Auto Fit candidates**.
-5. Adjust **Rib width**, **Extrusion depth**, or any other settings you care about, then click **OK**.
-
-You can also place the grid manually using pitch, offsets and rotation. The default settings are a starting point.
+Select a planar face (optionally a sketch profile), set the **Auto Fit** pitch limits, click **Find Fits**, inspect the result, then click **OK**.
 
 ## Install
 
