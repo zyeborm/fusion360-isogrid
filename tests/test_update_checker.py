@@ -19,20 +19,29 @@ class VersionTests(unittest.TestCase):
         self.assertFalse(update_checker.newer_version('broken', '2.0.0'))
         self.assertFalse(update_checker.newer_version('0.6.4', '0.6.5-beta'))
 
-    def test_fetch_manifest_version(self):
+    def test_fetch_stable_release_version(self):
         class FakeResponse:
             def __init__(self, data): self.data = data
             def __enter__(self): return self
             def __exit__(self, *args): return None
             def read(self, size): return self.data[:size]
-        body = json.dumps({'version': '0.6.5'}).encode()
+        body = json.dumps({
+            'tag_name':'v0.6.5',
+            'draft':False,
+            'prerelease':False,
+            'assets':[{
+                'name':update_checker.release_asset_name('0.6.5'),
+                'state':'uploaded',
+                'browser_download_url':update_checker.release_archive_url('0.6.5')
+            }]
+        }).encode()
         with patch.object(update_checker, 'urlopen', return_value=FakeResponse(body)) as stub:
             self.assertEqual(update_checker.fetch_remote_version(), '0.6.5')
             self.assertEqual(stub.call_args.kwargs['timeout'], 4)
         with patch.object(update_checker, 'urlopen', return_value=FakeResponse(b'{bad')):
             with self.assertRaises(ValueError):
                 update_checker.fetch_remote_version()
-        with patch.object(update_checker, 'urlopen', return_value=FakeResponse(b'0' * 16385)):
+        with patch.object(update_checker, 'urlopen', return_value=FakeResponse(b'0' * 65537)):
             with self.assertRaises(ValueError):
                 update_checker.fetch_remote_version()
 
