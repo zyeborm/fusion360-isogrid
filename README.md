@@ -8,9 +8,11 @@ Select a planar face (optionally a sketch profile), set the **Auto Fit** pitch l
 
 ## Install
 
-1. Download the repository ZIP (via **Code → Download ZIP**) or clone it.
+1. Download the ZIP (**Code → Download ZIP**), extract it somewhere permanent, and rename the extracted folder to `fusion360-isogrid`.
 2. In Fusion, open **Utilities → Scripts and Add-Ins → Add-Ins**.
-3. Click **+**, select the `fusion360-isogrid` folder and click **Run**.
+3. Choose **+ → Script or add-in from device**, select the extracted folder, then click **Run**.
+
+[Autodesk's guide to installing add-ins from GitHub](https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/UsingSamplesFromGitHub_UM.htm).
 
 The add-in works on planar faces, including curved boundaries and existing holes. It creates native Fusion sketch geometry and a cut feature.
 
