@@ -2,7 +2,7 @@
   "autodeskProduct": "Fusion360",
   "type": "addin",
   "id": "9b70f5e1-4653-4c46-a2d8-fd0ee68e23a1",
-  "author": "OpenAI / User",
+  "author": "VapourForge",
   "description": {
     "": "Planar isogrid finishing feature with automatic fitting and pure-Python geometry."
   },
