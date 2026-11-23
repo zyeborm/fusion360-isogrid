@@ -20,6 +20,8 @@ COMMAND_NAME = 'fusion360-isogrid'
 # Keep the version in the running Python code, not in the on-disk manifest:
 # the updater replaces that manifest while this old code remains loaded.
 RUNNING_VERSION = '0.8.8'
+# The Marketplace build turns this off and excludes update_checker.py entirely.
+ENABLE_UPDATES = True
 COMMAND_TITLE = f'{COMMAND_NAME} v{RUNNING_VERSION}'
 PANEL_ID = 'SolidScriptsAddinsPanel'
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -71,22 +73,22 @@ def _load_runtime():
         ('saved_mass', 'saved_mass'),
         ('preview_timing', 'preview_timing'),
         ('async_engine', 'async_engine'),
-        ('update_checker', 'update_checker'),
-    ):
+    ) + ((('update_checker', 'update_checker'),) if ENABLE_UPDATES else ()):
         module = importlib.import_module(name)
         if _runtime_ever_loaded:
             module = importlib.reload(module)
         globals()[alias] = module
     OffsetInterval = offset_cleanup.OffsetInterval
 
-    if _update_checker is not None:
-        _update_checker.close()
-    _update_checker = update_checker.UpdateChecker(
-        RUNNING_VERSION, lambda: APP.fireCustomEvent(CUSTOM_EVENT_ID))
-    if _update_installer is not None:
-        _update_installer.close()
-    _update_installer = update_checker.UpdateInstaller(
-        Path(__file__).parent, lambda: APP.fireCustomEvent(CUSTOM_EVENT_ID))
+    if ENABLE_UPDATES:
+        if _update_checker is not None:
+            _update_checker.close()
+        _update_checker = update_checker.UpdateChecker(
+            RUNNING_VERSION, lambda: APP.fireCustomEvent(CUSTOM_EVENT_ID))
+        if _update_installer is not None:
+            _update_installer.close()
+        _update_installer = update_checker.UpdateInstaller(
+            Path(__file__).parent, lambda: APP.fireCustomEvent(CUSTOM_EVENT_ID))
 
     _runtime_ever_loaded = True
     _runtime_loaded = True
@@ -1581,11 +1583,15 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
             inputs.addTextBoxCommandInput('status','Pattern','Select a planar face to preview.',3,True)
             inputs.addTextBoxCommandInput('warnings','Geometry warnings',
                 'No geometric warnings.',5,True)
-            notice=inputs.addTextBoxCommandInput('update_notice','Update','',2,True)
-            notice.isVisible=False
-            inputs.addBoolValueInput('check_update','Check for Updates',False,'',False)
-            button=inputs.addBoolValueInput('install_update','Install Update',False,'',False)
-            button.isVisible=False
+            if ENABLE_UPDATES:
+                notice=inputs.addTextBoxCommandInput('update_notice','Update','',2,True)
+                notice.isVisible=False
+                inputs.addBoolValueInput('check_update','Check for Updates',False,'',False)
+                button=inputs.addBoolValueInput('install_update','Install Update',False,'',False)
+                button.isVisible=False
+            inputs.addTextBoxCommandInput('privacy_policy','Privacy',
+                '<a href="https://github.com/zyeborm/fusion360-isogrid/blob/main/PRIVACY.md">'
+                'Privacy policy (VapourForge)</a>',1,True)
             _refresh_field_feedback(inputs)
             _update_placement_visibility(inputs)
             session=Session();session.inputs=inputs;session.command=command
@@ -1598,7 +1604,7 @@ class CreatedHandler(adsk.core.CommandCreatedEventHandler):
                       (command.validateInputs,ValidateHandler())]
             for event,handler in handlers:
                 event.add(handler);_handlers.append(handler)
-            if _update_checker is not None:
+            if ENABLE_UPDATES and _update_checker is not None:
                 _update_checker.check_on_open()
                 _show_update_notice(session)
         except:
@@ -1688,7 +1694,7 @@ class ChangedHandler(adsk.core.InputChangedEventHandler):
                 return
             elif changed in ('preset_name','preset_status','preset_group','preset_fields_group'):
                 return  # Preset metadata never changes the active geometry.
-            elif changed=='check_update':
+            elif ENABLE_UPDATES and changed=='check_update':
                 try:
                     if inputs.itemById('check_update').value and _update_checker:
                         _update_checker.check_now()
@@ -1697,7 +1703,7 @@ class ChangedHandler(adsk.core.InputChangedEventHandler):
                     self.session.updating=True
                     try:inputs.itemById('check_update').value=False
                     finally:self.session.updating=False
-            elif changed=='install_update':
+            elif ENABLE_UPDATES and changed=='install_update':
                 try:
                     version = _update_checker.available() if _update_checker else None
                     if version and _update_installer and _update_installer.start(version):
@@ -1811,8 +1817,9 @@ class BackgroundResultHandler(adsk.core.CustomEventHandler):
         for session in list(_sessions):
             try:session.consume()
             except Exception:APP.log('Isogrid custom-event failure:\n'+traceback.format_exc())
-            try:_show_update_notice(session)
-            except Exception:APP.log('Isogrid update-notice failure:\n'+traceback.format_exc())
+            if ENABLE_UPDATES:
+                try:_show_update_notice(session)
+                except Exception:APP.log('Isogrid update-notice failure:\n'+traceback.format_exc())
 
 
 def run(context):
