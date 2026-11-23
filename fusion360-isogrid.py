@@ -5,30 +5,13 @@ required; this module is intentionally not imported by the standalone tests.
 """
 import adsk.core
 import adsk.fusion
-import json
-import math
 import os
 import sys
-import importlib
 import traceback
-import time
-import html
-from pathlib import Path
 
+# Autodesk's startup path only registers a command. Geometry and other helper
+# modules are imported when the user opens that command.
 sys.path.insert(0, os.path.dirname(__file__))
-import geometry
-import fitting
-import fast_fit
-import async_engine
-import curves2d as exact_curves
-import exact_clipper
-import update_checker
-import preview_timing
-import manufacturability
-import presets
-import saved_mass
-import tool_center
-from offset_cleanup import OffsetInterval
 
 APP = adsk.core.Application.get()
 UI = APP.userInterface
@@ -47,6 +30,67 @@ _sessions = []
 _custom_event = None
 _update_checker = None
 _update_installer = None
+_runtime_loaded = False
+_runtime_ever_loaded = False
+
+
+def _load_runtime():
+    """Load calculation/UI dependencies on first command activation.
+
+    Keep the add-in startup cheap: before the command is opened Fusion only
+    needs the adsk event types and the command registration. Fusion retains
+    Python modules across Stop/Run cycles, so explicitly reload dependencies
+    on later activations after a Stop (e.g. when source was replaced on disk).
+    """
+    global _runtime_loaded, _runtime_ever_loaded
+    global json, math, time, html, Path, OffsetInterval
+    global _update_checker, _update_installer
+    if _runtime_loaded:
+        return
+    import importlib
+    import json
+    import math
+    import time
+    import html
+    from pathlib import Path
+
+    importlib.invalidate_caches()
+    # Dependency order matters on reload: native curves before clipping,
+    # then region/fit modules and finally the background worker.
+    for alias, name in (
+        ('exact_curves', 'curves2d'),
+        ('exact_clipper', 'exact_clipper'),
+        ('geometry', 'geometry'),
+        ('manufacturability', 'manufacturability'),
+        ('presets', 'presets'),
+        ('fast_fit', 'fast_fit'),
+        ('fitting', 'fitting'),
+        ('offset_cleanup', 'offset_cleanup'),
+        ('shared_boundary', 'shared_boundary'),
+        ('tool_center', 'tool_center'),
+        ('saved_mass', 'saved_mass'),
+        ('preview_timing', 'preview_timing'),
+        ('async_engine', 'async_engine'),
+        ('update_checker', 'update_checker'),
+    ):
+        module = importlib.import_module(name)
+        if _runtime_ever_loaded:
+            module = importlib.reload(module)
+        globals()[alias] = module
+    OffsetInterval = offset_cleanup.OffsetInterval
+
+    if _update_checker is not None:
+        _update_checker.close()
+    _update_checker = update_checker.UpdateChecker(
+        RUNNING_VERSION, lambda: APP.fireCustomEvent(CUSTOM_EVENT_ID))
+    if _update_installer is not None:
+        _update_installer.close()
+    _update_installer = update_checker.UpdateInstaller(
+        Path(__file__).parent, lambda: APP.fireCustomEvent(CUSTOM_EVENT_ID))
+
+    _runtime_ever_loaded = True
+    _runtime_loaded = True
+    preview_timing.log('fusion.command_runtime_loaded', version=RUNNING_VERSION)
 
 
 def _show_update_notice(session):
@@ -1435,6 +1479,7 @@ def _update_placement_visibility(inputs):
 class CreatedHandler(adsk.core.CommandCreatedEventHandler):
     def notify(self,args):
         try:
+            _load_runtime()
             command=args.command
             command.setDialogInitialSize(445,760)
             command.isExecutedWhenPreEmpted=False
@@ -1771,26 +1816,10 @@ class BackgroundResultHandler(adsk.core.CustomEventHandler):
 
 
 def run(context):
-    global _custom_event, _update_checker, _update_installer
-    preview_timing.log('fusion.addin_start', version=RUNNING_VERSION)
+    global _custom_event
     try:
-        # Fusion keeps imported helper modules in sys.modules across Add-In
-        # Stop/Run cycles. Reload source after files are replaced on disk.
-        # Compiled GEOS support is disabled; never reload its native module.
-        # Reload geometry primitives first: Fusion keeps sys.modules alive
-        # across Add-In Stop/Run cycles. Reloading only geometry left the old
-        # curves2d implementation installed after an update (e.g. missing
-        # Ellipse/Nurbs attributes). Keep all modules on the same generation.
-        importlib.invalidate_caches()
-        importlib.reload(exact_curves)
-        importlib.reload(exact_clipper)
-        importlib.reload(geometry)
-        importlib.reload(manufacturability)
-        importlib.reload(presets)
-        importlib.reload(fast_fit)
-        importlib.reload(fitting)
-        importlib.reload(async_engine)
-        importlib.reload(update_checker)
+        # Register the button immediately; all geometry and support imports
+        # are deferred until its commandCreated event.
         # Re-registration is safe after an Add-In Stop/Run cycle.
         try: APP.unregisterCustomEvent(CUSTOM_EVENT_ID)
         except: pass
@@ -1798,14 +1827,6 @@ def run(context):
         custom_handler=BackgroundResultHandler()
         _custom_event.add(custom_handler)
         _handlers.append(custom_handler)
-        if _update_checker is not None:
-            _update_checker.close()
-        _update_checker=update_checker.UpdateChecker(
-            RUNNING_VERSION,lambda: APP.fireCustomEvent(CUSTOM_EVENT_ID))
-        if _update_installer is not None:
-            _update_installer.close()
-        _update_installer=update_checker.UpdateInstaller(
-            Path(__file__).parent, lambda: APP.fireCustomEvent(CUSTOM_EVENT_ID))
         workspace=UI.workspaces.itemById(WORKSPACE_ID)
         panel=workspace.toolbarPanels.itemById(PANEL_ID)
         if panel is None:raise RuntimeError('Cannot locate the Solid > Add-Ins panel.')
@@ -1825,7 +1846,7 @@ def run(context):
 
 
 def stop(context):
-    global _custom_event, _update_checker, _update_installer
+    global _custom_event, _update_checker, _update_installer, _runtime_loaded
     if _update_installer is not None:
         _update_installer.close()
         _update_installer=None
@@ -1845,3 +1866,4 @@ def stop(context):
         except:pass
         _custom_event=None
         _handlers.clear();_sessions.clear()
+        _runtime_loaded = False
