@@ -36,7 +36,7 @@ class DistributionTests(unittest.TestCase):
                 self.assertNotIn('tests/',str(mk.namelist()))
 
     def test_source_versions_must_agree(self):
-        with self.assertRaisesRegex(ValueError,'version'):
+        with self.assertRaisesRegex(ValueError,'[Vv]ersion'):
             builder.package_source('99.0.0',False)
 
     def test_marketplace_icon_is_png(self):
