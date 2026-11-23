@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def load_fusion_ui():
+def load_fusion_ui(initialize=True):
     """Load actual command source against a minimal adsk namespace shim."""
     adsk = types.ModuleType('adsk')
     core = types.ModuleType('adsk.core')
@@ -32,6 +32,8 @@ def load_fusion_ui():
     with patch.dict(sys.modules, {'adsk': adsk, 'adsk.core': core,
                                   'adsk.fusion': fusion}):
         spec.loader.exec_module(module)
+    if initialize:
+        module._load_runtime()
     return module
 
 
@@ -50,6 +52,18 @@ class Inputs:
 
 
 class PreviewLifecycleTests(unittest.TestCase):
+    def test_import_only_registers_helpers_until_command_activation(self):
+        ui=load_fusion_ui(initialize=False)
+        self.assertFalse(ui._runtime_loaded)
+        self.assertNotIn('geometry',ui.__dict__)
+        self.assertNotIn('preview_timing',ui.__dict__)
+        ui._load_runtime()
+        self.assertTrue(ui._runtime_loaded)
+        self.assertIs(ui.OffsetInterval,ui.offset_cleanup.OffsetInterval)
+        initial=ui.geometry
+        ui._load_runtime()
+        self.assertIs(ui.geometry,initial)
+
     @classmethod
     def setUpClass(cls):
         cls.ui = load_fusion_ui()
