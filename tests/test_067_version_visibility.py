@@ -32,7 +32,6 @@ class VersionVisibilityTests(unittest.TestCase):
         app = MagicMock()
         app.registerCustomEvent.return_value = MagicMock()
         with patch.object(ui, 'UI', fusion_ui), patch.object(ui, 'APP', app), \
-             patch.object(ui.importlib, 'reload', side_effect=lambda module: module), \
              patch.object(ui, '_update_checker', None), \
              patch.object(ui, '_update_installer', None):
             ui.run({})

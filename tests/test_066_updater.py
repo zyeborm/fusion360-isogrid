@@ -9,7 +9,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from update_checker import install_archive, UpdateInstaller
+from update_checker import (install_archive, UpdateInstaller, fetch_remote_version,
+                            release_asset_name, release_archive_url, _download_archive)
 
 ID = '9b70f5e1-4653-4c46-a2d8-fd0ee68e23a1'
 FILES = {
@@ -29,7 +30,7 @@ def build_zip(files=FILES):
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, 'w', zipfile.ZIP_DEFLATED) as archive:
         for name, content in files.items():
-            archive.writestr('fusion360-isogrid-main/' + name, content)
+            archive.writestr('fusion360-isogrid/' + name, content)
     return stream.getvalue()
 
 
@@ -70,6 +71,51 @@ class UpdateInstallTests(unittest.TestCase):
         installed=install_archive(self.addin, '0.6.6', build_zip(files))
         self.assertEqual(installed,'0.6.6')
         self.assertFalse((self.addin/'.github').exists())
+
+    def test_source_archive_with_screenshots_is_installable(self):
+        files = dict(FILES)
+        files['images/isogrid-result.png'] = b'png-bytes'
+        installed = install_archive(self.addin, '0.6.6', build_zip(files))
+        self.assertEqual(installed, '0.6.6')
+        self.assertFalse((self.addin/'images').exists())
+
+    def test_latest_release_requires_uploaded_matching_asset(self):
+        from unittest.mock import MagicMock
+        tag = 'v0.6.6'
+        asset = {
+            'name': release_asset_name('0.6.6'),
+            'state': 'uploaded',
+            'browser_download_url': release_archive_url('0.6.6'),
+        }
+        release = dict(tag_name=tag, draft=False, prerelease=False, assets=[asset])
+        def fetch(data):
+            response=MagicMock()
+            response.__enter__.return_value.read.return_value=json.dumps(data).encode()
+            return response
+        with patch('update_checker.urlopen', return_value=fetch(release)) as call:
+            self.assertEqual(fetch_remote_version(), '0.6.6')
+            self.assertIn('releases/latest',call.call_args.args[0].full_url)
+        for bad in [
+            dict(release, prerelease=True),
+            dict(release, draft=True),
+            dict(release, assets=[]),
+            dict(release, assets=[dict(asset, state='starter')]),
+            dict(release, assets=[dict(asset, browser_download_url='https://example.net/bad.zip')]),
+        ]:
+            with patch('update_checker.urlopen',return_value=fetch(bad)):
+                with self.assertRaises(ValueError):
+                    fetch_remote_version()
+
+    def test_installer_downloads_exact_versioned_release_asset(self):
+        from unittest.mock import MagicMock
+        response=MagicMock()
+        response.__enter__.return_value.read.return_value=b'zip contents'
+        with patch('update_checker.urlopen',return_value=response) as call:
+            self.assertEqual(_download_archive('0.6.6'), b'zip contents')
+            self.assertEqual(call.call_args.args[0].full_url,
+                             release_archive_url('0.6.6'))
+        with self.assertRaises(ValueError):
+            release_archive_url('main')
 
     def test_manifest_mismatch_rejected_without_changes(self):
         with self.assertRaisesRegex(ValueError, 'version changed'):
@@ -122,7 +168,8 @@ class UpdateInstallTests(unittest.TestCase):
     def test_one_click_worker_delivers_success_and_refuses_duplicate(self):
         ready = threading.Event()
         unblock = threading.Event()
-        def fetch():
+        def fetch(version):
+            self.assertEqual(version,'0.6.6')
             unblock.wait(2)
             return build_zip()
         installer = UpdateInstaller(self.addin, ready.set, fetch=fetch)
