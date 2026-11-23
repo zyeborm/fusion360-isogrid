@@ -2,6 +2,8 @@ name: Marketplace startup and regression tests
 on:
   push:
     branches: [marketplace]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
