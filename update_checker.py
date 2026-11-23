@@ -12,10 +12,22 @@ import time
 from urllib.request import Request, urlopen
 
 REPOSITORY_URL = 'https://github.com/zyeborm/fusion360-isogrid'
-MANIFEST_URL = (
-    'https://raw.githubusercontent.com/zyeborm/fusion360-isogrid/'
-    'main/fusion360-isogrid.manifest'
+LATEST_RELEASE_URL = (
+    'https://api.github.com/repos/zyeborm/fusion360-isogrid/releases/latest'
 )
+
+
+def release_asset_name(version):
+    if version_tuple(version) is None:
+        raise ValueError('Invalid release version')
+    return f'fusion360-isogrid-v{str(version).lstrip("v")}-github.zip'
+
+
+def release_archive_url(version):
+    """Canonical GitHub Release download path, independent of branch heads."""
+    normalized = str(version).lstrip('v')
+    name = release_asset_name(normalized)
+    return f'{REPOSITORY_URL}/releases/download/v{normalized}/{name}'
 CHECK_INTERVAL_SECONDS = 30 * 60
 
 
@@ -33,24 +45,31 @@ def newer_version(local_version, remote_version):
 
 
 def fetch_remote_version():
-    """Get the version from the public main-branch manifest; no token needed."""
-    request = Request(MANIFEST_URL, headers={
+    """Find the latest stable published release with the installable ZIP asset."""
+    request = Request(LATEST_RELEASE_URL, headers={
         'User-Agent': 'fusion360-isogrid-update-check',
-        'Accept': 'application/json',
+        'Accept': 'application/vnd.github+json',
     })
     with urlopen(request, timeout=4) as response:
-        # Manifest is a tiny JSON file. Bound size in case of unexpected server data.
-        payload = response.read(16_385)
-    if len(payload) > 16_384:
-        raise ValueError('Remote manifest exceeds size limit')
-    manifest = json.loads(payload.decode('utf-8'))
-    if not isinstance(manifest, dict):
-        raise ValueError('Invalid remote manifest')
-    version = manifest.get('version')
-    if version_tuple(version) is None:
-        raise ValueError('Invalid version in remote manifest')
-    return str(version)
-
+        payload = response.read(65_537)
+    if len(payload) > 65_536:
+        raise ValueError('Release metadata exceeds size limit')
+    release = json.loads(payload.decode('utf-8'))
+    if not isinstance(release, dict) or release.get('draft') or release.get('prerelease'):
+        raise ValueError('Invalid stable GitHub release')
+    tag = release.get('tag_name')
+    if version_tuple(tag) is None or not str(tag).startswith('v'):
+        raise ValueError('Unexpected GitHub release tag')
+    version = str(tag)[1:]
+    expected_name = release_asset_name(version)
+    expected_url = release_archive_url(version)
+    if not any(isinstance(asset, dict)
+               and asset.get('name') == expected_name
+               and asset.get('state') == 'uploaded'
+               and asset.get('browser_download_url') == expected_url
+               for asset in release.get('assets', [])):
+        raise ValueError('Published release has no verified GitHub install package')
+    return version
 
 class UpdateChecker:
     """Check on command open, cache the result and notify on completion."""
@@ -151,15 +170,13 @@ class UpdateChecker:
 # The update archive is downloaded only when the user clicks Install Update.
 # Installation is staged and rolled back on failure. Imported Python modules
 # remain active until Fusion is restarted; we never attempt an in-process reload.
-ARCHIVE_URL = (
-    'https://github.com/zyeborm/fusion360-isogrid/archive/refs/heads/main.zip'
-)
 MAX_ARCHIVE_BYTES = 8 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 16 * 1024 * 1024
 
 
-def _download_archive():
-    request = Request(ARCHIVE_URL, headers={'User-Agent': 'fusion360-isogrid-updater'})
+def _download_archive(version):
+    request = Request(release_archive_url(version),
+                      headers={'User-Agent': 'fusion360-isogrid-updater'})
     with urlopen(request, timeout=20) as response:
         data = response.read(MAX_ARCHIVE_BYTES + 1)
     if len(data) > MAX_ARCHIVE_BYTES:
@@ -168,7 +185,7 @@ def _download_archive():
 
 
 def install_archive(addin_directory, expected_version, archive_bytes):
-    """Replace add-in source from a validated GitHub ZIP, preserving local files.
+    """Replace add-in source from a validated release ZIP, preserving local files.
 
     Called on a background thread. Does not touch any Fusion APIs.
     Uses a same-volume staging directory and restores original files if a write
@@ -199,10 +216,10 @@ def install_archive(addin_directory, expected_version, archive_bytes):
             if '\\' in member.filename or ':' in member.filename:
                 raise ValueError('Unsafe platform-specific archive path')
             path = PurePosixPath(member.filename)
-            if (len(path.parts) < 2 or path.parts[0] != 'fusion360-isogrid-main'
+            if (len(path.parts) < 2 or path.parts[0] != 'fusion360-isogrid'
                     or any(part in ('', '.', '..') for part in path.parts)):
                 raise ValueError('Unsafe update archive path')
-            relative = path.relative_to('fusion360-isogrid-main')
+            relative = path.relative_to('fusion360-isogrid')
             # Research/visualisation fixtures ship in GitHub's source ZIP,
             # but are not part of the installed add-in. Check paths and link
             # types before excluding them.
@@ -211,17 +228,17 @@ def install_archive(addin_directory, expected_version, archive_bytes):
             # GitHub's source ZIP also includes repository-only development
             # material. Ignore it after validating ZIP paths and link types,
             # before imposing the installed add-in's two-level layout.
-            if relative.parts[0] in ('studies', '.github'):
+            if relative.parts[0] in ('studies', '.github', 'images', 'tests', 'tools', 'assets'):
                 continue
             if (relative.is_absolute() or len(relative.parts) > 2
-                    or (len(relative.parts) == 2 and relative.parts[0] != 'tests')):
+                    or len(relative.parts) == 2):
                 raise ValueError('Unexpected update archive layout')
             if relative.parts[0].startswith('.') and str(relative) != '.gitignore':
                 continue
             if any(part in ('vendor', '__pycache__', '.git') for part in relative.parts):
                 continue
             if (relative.suffix not in ('.py', '.md', '.manifest')
-                    and str(relative) not in ('.gitignore', 'LICENSE')):
+                    and str(relative) != 'LICENSE'):
                 raise ValueError('Unexpected file type in update archive')
             if stat.S_ISLNK(member.external_attr >> 16):
                 raise ValueError('Symbolic links are not accepted in an update')
@@ -323,7 +340,7 @@ class UpdateInstaller:
 
     def _run(self, version):
         try:
-            archive = self._fetch()
+            archive = self._fetch(version)
             installed = self._installer(self.directory, version, archive)
             result = ('installed', installed, None)
         except Exception as exc:
