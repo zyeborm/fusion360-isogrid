@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.8.8 — Native Fusion integration of direct tool-centre geometry
+
+- Replace the worker's repeated curved pocket clipping and secondary fillet
+  repair with shared plate erosion, triangle-centre intersections and direct
+  rounded-contour dilation. Preview and cut use the **same** generated curves.
+- Reuse the prepared eroded boundary when pitch/rotation/fit placement changes,
+  preparing again when the selected face, clearance or corner radius changes.
+- Export cleaned, parameter-trimmed self-intersecting offsets as a single native
+  multi-span Fusion spline; retain native lines and circular arcs when offsets
+  remain exact lines or circles. Cut-profile ownership remains unchanged.
+- Preserve the old geometry path for zero corner radius or untrimmed output.
+  Unsupported tool-centre joins are counted as rejected geometry, rather than
+  introducing unrequested sharp corners or a second Boolean repair operation.
+- On the curved test fixture, Python whole-pattern generation improves from
+  3.53 to 0.49 seconds (7.2x) for the default fit and 4.71 to 0.47 seconds
+  (10.0x) for Auto Fit. One additional valid pocket appears in the default
+  layout; a pocket adjacent to a circular void is corrected in Auto Fit.
+- Python test suite: 179 tests, one skipped. Native Fusion sketch profile and
+  cut timings require in-application validation.
+
 ## 0.8.7 — Saved mass and faster exact previews
 
 - Add a compact material-density selector (aluminium, steel, UHMW, 1 g/cm³,

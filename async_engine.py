@@ -13,6 +13,7 @@ import manufacturability
 
 import fitting
 import geometry
+import tool_center
 
 
 class Cancelled(Exception):
@@ -99,15 +100,27 @@ class LatestWorker:
         started=time.perf_counter()
         if not payload['settings'].get('trim_boundary',True):
             return None
-        key = payload['prep_key']
+        s=payload['settings']
+        direct=s['corner']>0 and s['backend']!='geos'
+        # Radius changes the eroded boundary. Pitch/placement changes do not.
+        key=(payload['prep_key'],'tool-centre' if direct else 'legacy',
+             s['corner'] if direct else None)
         if key != self._prepared_key:
-            s = payload['settings']
-            self._prepared = geometry.PreparedGeometry(
-                payload['regions'],s['perimeter'],s['holeclear'],s['backend'])
-            self._prepared_key = key
-            preview_timing.log('worker.prepare_complete', elapsed=time.perf_counter()-started, backend=self._prepared.backend)
+            if direct:
+                prepared=tool_center.ToolCentre(payload['regions'],
+                    s['perimeter'],s['holeclear'],s['corner'])
+                backend='tool-centre'
+            else:
+                prepared=geometry.PreparedGeometry(payload['regions'],
+                    s['perimeter'],s['holeclear'],s['backend'])
+                backend=prepared.backend
+            self._prepared=prepared
+            self._prepared_key=key
+            preview_timing.log('worker.prepare_complete',
+                elapsed=time.perf_counter()-started,backend=backend)
         else:
-            preview_timing.log('worker.prepare_cache_hit', elapsed=time.perf_counter()-started)
+            preview_timing.log('worker.prepare_cache_hit',
+                elapsed=time.perf_counter()-started)
         return self._prepared
 
     def _preview(self, payload, cancel):
@@ -122,14 +135,27 @@ class LatestWorker:
             if cancel.is_set():
                 raise Cancelled()
         rejected=[]
-        shapes = geometry.make_pockets(
-            payload['regions'], s['pitch'],s['rib'],s['perimeter'],
-            s['holeclear'], s['dx'], s['dy'], payload['rotation'],
-            s['corner'], s['minfraction']/100, max_cells=1600,
-            vertex_hole_diameter=s['nodehole'],
-            base_origin=payload['origin'], anchor=payload['anchor'],
-            prepared=prepared,trim_boundary=s.get('trim_boundary',True),
-            rejected=rejected,check_cancel=check_cancel)
+        if isinstance(prepared,tool_center.ToolCentre):
+            shapes,engine=tool_center.make_toolcentre_pockets(
+                payload['regions'],s['pitch'],s['rib'],s['perimeter'],
+                s['holeclear'],s['dx'],s['dy'],payload['rotation'],
+                s['corner'],s['minfraction']/100,max_cells=1600,
+                vertex_hole_diameter=s['nodehole'],base_origin=payload['origin'],
+                anchor=payload['anchor'],check_cancel=check_cancel,
+                prepared=prepared)
+            rejected.extend(['unsupported tool-centre join']*engine.nonconvex)
+            preview_timing.log('worker.tool_centre_complete',
+                intersections=engine.boundary.count_intersections,
+                unsupported=engine.nonconvex)
+        else:
+            shapes = geometry.make_pockets(
+                payload['regions'], s['pitch'],s['rib'],s['perimeter'],
+                s['holeclear'], s['dx'], s['dy'], payload['rotation'],
+                s['corner'], s['minfraction']/100, max_cells=1600,
+                vertex_hole_diameter=s['nodehole'],
+                base_origin=payload['origin'], anchor=payload['anchor'],
+                prepared=prepared,trim_boundary=s.get('trim_boundary',True),
+                rejected=rejected,check_cancel=check_cancel)
         preview_timing.log('worker.pockets_complete', elapsed=time.perf_counter()-started, shapes=len(shapes))
         if cancel.is_set():
             raise Cancelled()
