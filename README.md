@@ -69,4 +69,4 @@ Generate isogrid pockets on a planar face in **Autodesk Fusion**. The result is 
 
 The tool supports planar faces bounded by lines, arcs, circles, ellipses and splines, including existing holes. Dimensions and offsets are editable; pocket generation uses native Fusion curves.
 
-[Advanced technical notes](ADVANCED.md) · [Changelog](CHANGELOG.md) · [Licence](LICENSE)
+[Advanced technical notes](ADVANCED.md) · [Changelog](CHANGELOG.md) · [Licence](LICENSE) · [Privacy](PRIVACY.md)
