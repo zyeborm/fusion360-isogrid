@@ -1,0 +1,17 @@
+name: Measure isogrid startup (headless)
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [benchmark/startup-088]
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Measure import and registration startup
+        run: python benchmark_startup.py
