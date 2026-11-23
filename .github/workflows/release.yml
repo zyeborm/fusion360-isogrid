@@ -1,0 +1,66 @@
+name: Publish versioned Fusion distributions
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test oracle
+        run: python -m pip install shapely
+      - name: Full regression suite
+        run: python -m unittest discover -s tests -v
+      - name: Headless cold-start benchmark
+        run: python benchmark_startup.py
+      - name: Build and validate both distributions
+        run: |
+          VERSION=$(python -c 'import json; print(json.load(open("fusion360-isogrid.manifest"))["version"])')
+          python tools/build_release.py --version "$VERSION"
+      - name: Save verified release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-fusion-distributions
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-fusion-distributions
+          path: dist
+      - name: Publish only when the manifest version has no existing release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION=$(python -c 'import json; print(json.load(open("fusion360-isogrid.manifest"))["version"])')
+          TAG="v${VERSION}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; no republishing."
+            exit 0
+          fi
+          gh release create "$TAG" \
+            "dist/fusion360-isogrid-v${VERSION}-github.zip" \
+            "dist/fusion360-isogrid-v${VERSION}-marketplace.zip" \
+            "dist/marketplace-icon-120.png" \
+            "dist/marketplace-icon-512.png" \
+            "dist/SHA256SUMS.txt" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "fusion360-isogrid v${VERSION}" \
+            --generate-notes
