@@ -14,10 +14,14 @@ Generate isogrid pockets on a planar face in **Autodesk Fusion**. The result is 
 
 ## Install
 
-1. From this repository, choose **Code → Download ZIP**.
-2. Extract the ZIP somewhere permanent. Rename the extracted folder to `fusion360-isogrid` (with `fusion360-isogrid.py` and `fusion360-isogrid.manifest` directly inside it).
-3. In Fusion, open **Utilities → Add-Ins → Scripts and Add-Ins**. Click **+**, add the extracted folder, and switch **Run** on. **Run on Startup** is optional.
+1. Open the [latest GitHub Release](https://github.com/zyeborm/fusion360-isogrid/releases/latest) and download `fusion360-isogrid-vX.Y.Z-github.zip` from its Assets.
+2. Extract the ZIP somewhere permanent. The `fusion360-isogrid` folder inside contains `fusion360-isogrid.py` and `fusion360-isogrid.manifest`.
+3. In Fusion, open **Utilities → Add-Ins → Scripts and Add-Ins**. Click **+**, add that folder, and switch **Run** on. **Run on Startup** is optional.
 4. Launch the command from **Utilities → Add-Ins → fusion360-isogrid**.
+
+The GitHub edition checks stable published Releases for updates when its command opens and downloads an update only after you click **Install Update**. The Autodesk Marketplace edition uses Autodesk-managed distribution and has no built-in updater.
+
+To install a development snapshot instead, you can still use **Code → Download ZIP**; extract and rename its root folder to `fusion360-isogrid`.
 
 <img src="images/install-download.webp" alt="GitHub Code menu and Download ZIP button" width="420">
 
@@ -69,4 +73,4 @@ Generate isogrid pockets on a planar face in **Autodesk Fusion**. The result is 
 
 The tool supports planar faces bounded by lines, arcs, circles, ellipses and splines, including existing holes. Dimensions and offsets are editable; pocket generation uses native Fusion curves.
 
-[Advanced technical notes](ADVANCED.md) · [Changelog](CHANGELOG.md) · [Licence](LICENSE) · [Privacy](PRIVACY.md)
+[Advanced technical notes](ADVANCED.md) · [Changelog](CHANGELOG.md) · [Licence](LICENSE) · [Privacy](PRIVACY.md) · [Releases](https://github.com/zyeborm/fusion360-isogrid/releases)
