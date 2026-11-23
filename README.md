@@ -23,7 +23,6 @@ The GitHub edition checks stable published Releases for updates when its command
 
 To install a development snapshot instead, you can still use **Code → Download ZIP**; extract and rename its root folder to `fusion360-isogrid`.
 
-<img src="images/install-download.webp" alt="GitHub Code menu and Download ZIP button" width="420">
 
 ![Fusion Scripts and Add-Ins window: add from device, run, and optionally start automatically](images/install-addin.webp)
 
